@@ -102,8 +102,4 @@ wget -N https://raw.githubusercontent.com/wyx2685/XrayR-release/master/install.s
 
 [XrayR通知](https://t.me/XrayR_channel)
 
-## Stargazers over time
-
-[![Stargazers over time](https://starchart.cc/wyx2685/XrayR.svg)](https://starchart.cc/wyx2685/XrayR)
-
 
