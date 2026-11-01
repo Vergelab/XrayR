@@ -7,8 +7,9 @@ import (
 )
 
 var (
-	version  = "0.9.4"
+	version  = "0.1"
 	codename = "XrayR"
+	buildBy  = "Vergelab"
 	intro    = "A Xray backend that supports many panels"
 )
 
@@ -23,5 +24,5 @@ func init() {
 }
 
 func showVersion() {
-	fmt.Printf("%s %s (%s) \n", codename, version, intro)
+	fmt.Printf("%s %s (%s)\n%s\n", codename, version, buildBy, intro)
 }
