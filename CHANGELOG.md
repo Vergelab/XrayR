@@ -1,5 +1,11 @@
 # 更新日志
 
+## 0.4
+
+- `REALITYAllowNonPQClients` 改到配置文件顶层，与 `Log`、`Nodes` 同级。不写仍然是 true。启动和热重载时写入一次，对整个进程生效。
+- 节点上的 `ControllerConfig.REALITYAllowNonPQClients` 仍能解析，旧配置不会坏。顶层没写时按原来的规则用第一个节点的值，并打一条弃用警告，提示改用顶层键。两处都写时以顶层为准；取值不同则打一条日志。
+- 示例配置改回上游那种短行内注释。开关只在顶层出现一次。
+
 ## 0.3
 
 - 接受没有 `X25519MLKEM768`、只有 X25519 的 REALITY ClientHello。

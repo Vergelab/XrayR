@@ -226,8 +226,8 @@ func InboundBuilder(config *Config, nodeInfo *api.NodeInfo, tag string) (*core.I
 	// hybrid group, so they do not connect either. android and 360 have no
 	// TLS 1.3 key share and fail in both modes.
 	//
-	// REALITYAllowNonPQClients defaults to true and is applied process-wide
-	// (xray-core's REALITY protobuf has no field for it). X25519-only hellos
+	// The top-level REALITYAllowNonPQClients key defaults to true and is applied
+	// process-wide (xray-core's REALITY protobuf has no field for it). X25519-only hellos
 	// then authenticate with that share, so chrome, firefox, safari, ios,
 	// edge, and qq connect. A client that still sends X25519MLKEM768 keeps
 	// that group for the TLS handshake. mldsa65Seed stays optional.
