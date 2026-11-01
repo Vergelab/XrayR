@@ -2,14 +2,14 @@
 
 Vergelab 维护的 Xray 后端，用来把一块节点同时接到多种面板。命令和二进制名仍是 `XrayR`，已有的安装目录、systemd 单元和脚本不用改名。
 
-当前版本：**0.1**
+当前版本：**0.2**
 
 - 代码仓库：https://github.com/Vergelab/XrayR
 - 安装脚本与发布：https://github.com/Vergelab/xrayr-release
 - 容器镜像：`ghcr.io/vergelab/xrayr`
 - English: [README-en.md](README-en.md)
 
-`XrayR version` 会打印 `XrayR 0.1 (Vergelab)`。
+`XrayR version` 会打印 `XrayR 0.2 (Vergelab)`。
 
 ## 特点
 

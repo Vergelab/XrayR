@@ -2,14 +2,14 @@
 
 Xray backend maintained by Vergelab. One process can serve several panels and nodes. The command and binary name stay `XrayR`, so existing install paths, systemd units, and scripts keep working.
 
-Current version: **0.1**
+Current version: **0.2**
 
 - Source: https://github.com/Vergelab/XrayR
 - Install scripts and releases: https://github.com/Vergelab/xrayr-release
 - Container image: `ghcr.io/vergelab/xrayr`
 - 中文: [README.md](README.md)
 
-`XrayR version` prints `XrayR 0.1 (Vergelab)`.
+`XrayR version` prints `XrayR 0.2 (Vergelab)`.
 
 ## Features
 

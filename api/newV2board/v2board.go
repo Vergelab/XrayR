@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	stdnet "net"
 	"os"
 	"regexp"
 	"strconv"
@@ -456,12 +457,24 @@ func (c *APIClient) parseV2rayNodeResponse(s *serverConfig) (*api.NodeInfo, erro
 	} else {
 		dest = s.TlsSettings.Sni
 	}
+	realityDest, err := realityDestFromPanel(dest, s.TlsSettings.ServerPort)
+	if err != nil && s.Tls == 2 {
+		return nil, err
+	}
+	if realityDest == "" {
+		realityDest = dest
+	}
+	mldsaSeed := s.TlsSettings.Mldsa65Seed
+	if mldsaSeed == "" {
+		mldsaSeed = s.TlsSettings.Mldsa65
+	}
 	realityconfig := api.REALITYConfig{
-		Dest:             dest + ":" + s.TlsSettings.ServerPort,
-		ProxyProtocolVer: s.TlsSettings.Xver,
+		Dest:             realityDest,
+		ProxyProtocolVer: uint64(s.TlsSettings.Xver),
 		ServerNames:      []string{s.TlsSettings.Sni},
 		PrivateKey:       s.TlsSettings.PrivateKey,
 		ShortIds:         []string{s.TlsSettings.ShortId},
+		Mldsa65Seed:      mldsaSeed,
 	}
 	switch s.Network {
 	case "ws":
@@ -520,6 +533,30 @@ func (c *APIClient) parseV2rayNodeResponse(s *serverConfig) (*api.NodeInfo, erro
 		REALITYConfig:     &realityconfig,
 		NameServerConfig:  s.parseDNSConfig(),
 	}, nil
+}
+
+// realityDestFromPanel keeps an explicit host:port dest and otherwise appends
+// server_port, defaulting a blank port to 443 so dest is never "sni:".
+func realityDestFromPanel(dest, serverPort string) (string, error) {
+	dest = strings.TrimSpace(dest)
+	port := strings.TrimSpace(serverPort)
+	if port == "" {
+		port = "443"
+	}
+	if dest == "" {
+		return "", fmt.Errorf("REALITY dest is empty: server_name and dest are both blank")
+	}
+	host, existingPort, err := stdnet.SplitHostPort(dest)
+	if err == nil && existingPort != "" {
+		return dest, nil
+	}
+	if err == nil {
+		if host == "" {
+			return "", fmt.Errorf("REALITY dest %q is invalid", dest)
+		}
+		return stdnet.JoinHostPort(host, port), nil
+	}
+	return stdnet.JoinHostPort(dest, port), nil
 }
 
 func (s *serverConfig) parseDNSConfig() (nameServerList []*conf.NameServerConfig) {

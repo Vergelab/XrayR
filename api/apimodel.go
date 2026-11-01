@@ -130,4 +130,5 @@ type REALITYConfig struct {
 	MaxClientVer     string
 	MaxTimeDiff      uint64
 	ShortIds         []string
+	Mldsa65Seed      string
 }

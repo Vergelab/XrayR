@@ -7,13 +7,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	stdnet "net"
 	"strings"
 
-	"github.com/sagernet/sing-shadowsocks/shadowaead_2022"
-	C "github.com/sagernet/sing/common"
+	log "github.com/sirupsen/logrus"
 	"github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/infra/conf"
+	"github.com/xtls/xray-core/proxy/shadowsocks_2022"
 
 	"github.com/Vergelab/XrayR/api"
 	"github.com/Vergelab/XrayR/common/mylego"
@@ -41,7 +42,7 @@ func InboundBuilder(config *Config, nodeInfo *api.NodeInfo, tag string) (*core.I
 	// SniffingConfig
 	sniffingConfig := &conf.SniffingConfig{
 		Enabled:      true,
-		DestOverride: &conf.StringList{"http", "tls", "quic", "fakedns"},
+		DestOverride: conf.StringList{"http", "tls", "quic", "fakedns"},
 	}
 	if config.DisableSniffing {
 		sniffingConfig.Enabled = false
@@ -97,7 +98,13 @@ func InboundBuilder(config *Config, nodeInfo *api.NodeInfo, tag string) (*core.I
 		}
 	case "Shadowsocks", "Shadowsocks-Plugin":
 		protocol = "shadowsocks"
-		cipher := strings.ToLower(nodeInfo.CypherMethod)
+		cipher, ss2022, err := classifyShadowsocksMethod(nodeInfo.CypherMethod)
+		if err != nil {
+			return nil, err
+		}
+		if config.DisableIVCheck {
+			log.Warn("DisableIVCheck has no effect: xray-core v26 removed Shadowsocks IV replay protection")
+		}
 
 		proxySetting = &conf.ShadowsocksServerConfig{
 			Cipher:   cipher,
@@ -105,24 +112,32 @@ func InboundBuilder(config *Config, nodeInfo *api.NodeInfo, tag string) (*core.I
 		}
 
 		proxySetting, _ := proxySetting.(*conf.ShadowsocksServerConfig)
-		// shadowsocks must have a random password
-		// shadowsocks2022's password == user PSK, thus should a length of string >= 32 and base64 encoder
-		b := make([]byte, 32)
-		rand.Read(b)
-		randPasswd := hex.EncodeToString(b)
-		if C.Contains(shadowaead_2022.List, cipher) {
+		// Classic shadowsocks needs a server password even though each user brings their own.
+		// Shadowsocks 2022 multi-user uses the panel server key plus per-user PSKs.
+		if ss2022 {
+			method, methodErr := shadowsocks_2022.GetCipherMethod(cipher)
+			if methodErr != nil {
+				return nil, fmt.Errorf("shadowsocks 2022 cipher %s: %w", cipher, methodErr)
+			}
+			if _, keyErr := shadowsocks_2022.ParseKey(nodeInfo.ServerKey, method.KeySaltLength); keyErr != nil {
+				return nil, fmt.Errorf("shadowsocks 2022 server key for %s is invalid: %w", cipher, keyErr)
+			}
+			placeholder := make([]byte, method.KeySaltLength)
+			if _, randErr := rand.Read(placeholder); randErr != nil {
+				return nil, fmt.Errorf("shadowsocks 2022 placeholder key: %w", randErr)
+			}
 			proxySetting.Users = append(proxySetting.Users, &conf.ShadowsocksUserConfig{
-				Password: base64.StdEncoding.EncodeToString(b),
+				Password: base64.StdEncoding.EncodeToString(placeholder),
 			})
 		} else {
-			proxySetting.Password = randPasswd
+			b := make([]byte, 32)
+			if _, randErr := rand.Read(b); randErr != nil {
+				return nil, fmt.Errorf("shadowsocks password: %w", randErr)
+			}
+			proxySetting.Password = hex.EncodeToString(b)
 		}
 
 		proxySetting.NetworkList = &conf.NetworkList{"tcp", "udp"}
-		proxySetting.IVCheck = true
-		if config.DisableIVCheck {
-			proxySetting.IVCheck = false
-		}
 
 	case "dokodemo-door":
 		protocol = "dokodemo-door"
@@ -150,6 +165,10 @@ func InboundBuilder(config *Config, nodeInfo *api.NodeInfo, tag string) (*core.I
 	networkType, err := transportProtocol.Build()
 	if err != nil {
 		return nil, fmt.Errorf("convert TransportProtocol failed: %s", err)
+	}
+
+	if err := ValidateTransportHeader(networkType, nodeInfo.Header); err != nil {
+		return nil, err
 	}
 
 	switch networkType {
@@ -189,10 +208,18 @@ func InboundBuilder(config *Config, nodeInfo *api.NodeInfo, tag string) (*core.I
 			Host: nodeInfo.Host,
 		}
 		streamSetting.SplitHTTPSettings = splithttpSetting
+	case "mkcp":
+		// Header camouflage is gone. ValidateTransportHeader already rejected
+		// anything other than none; leave kcpSettings.header unset.
+		streamSetting.KCPSettings = &conf.KCPConfig{}
 	}
 	streamSetting.Network = &transportProtocol
 
-	// Build TLS and REALITY settings
+	// Build TLS and REALITY settings.
+	// allowInsecure is rejected by xray-core v26; this builder never sets it.
+	// REALITY clients must offer X25519MLKEM768 (fingerprint chrome / firefox /
+	// safari / ios / android / edge / 360 / qq). There is nothing to set
+	// server-side for that; mldsa65Seed stays optional.
 	var isREALITY bool
 	if config.DisableLocalREALITYConfig {
 		if nodeInfo.REALITYConfig != nil && nodeInfo.EnableREALITY {
@@ -200,9 +227,17 @@ func InboundBuilder(config *Config, nodeInfo *api.NodeInfo, tag string) (*core.I
 			streamSetting.Security = "reality"
 
 			r := nodeInfo.REALITYConfig
+			dest, err := marshalRealityDest(r.Dest)
+			if err != nil {
+				return nil, err
+			}
+			show := false
+			if config.REALITYConfigs != nil {
+				show = config.REALITYConfigs.Show
+			}
 			streamSetting.REALITYSettings = &conf.REALITYConfig{
-				Show:         config.REALITYConfigs.Show,
-				Dest:         []byte(`"` + r.Dest + `"`),
+				Show:         show,
+				Dest:         dest,
 				Xver:         r.ProxyProtocolVer,
 				ServerNames:  r.ServerNames,
 				PrivateKey:   r.PrivateKey,
@@ -210,31 +245,41 @@ func InboundBuilder(config *Config, nodeInfo *api.NodeInfo, tag string) (*core.I
 				MaxClientVer: r.MaxClientVer,
 				MaxTimeDiff:  r.MaxTimeDiff,
 				ShortIds:     r.ShortIds,
+				Mldsa65Seed:  r.Mldsa65Seed,
 			}
 		}
 	} else if config.EnableREALITY && config.REALITYConfigs != nil {
 		isREALITY = true
-		dest, err := json.Marshal(config.REALITYConfigs.Dest)
+		dest, err := marshalRealityDest(config.REALITYConfigs.Dest)
 		if err != nil {
-			return nil, fmt.Errorf("marshal dest %s config fialed: %s", dest, err)
+			return nil, err
 		}
 		streamSetting.Security = "reality"
-		var private_key string
+		var privateKey string
+		shortIDs := append([]string{}, config.REALITYConfigs.ShortIds...)
+		mldsaSeed := config.REALITYConfigs.Mldsa65Seed
 		if nodeInfo.REALITYConfig != nil {
-			private_key = nodeInfo.REALITYConfig.PrivateKey
+			if nodeInfo.REALITYConfig.PrivateKey != "" {
+				privateKey = nodeInfo.REALITYConfig.PrivateKey
+			}
+			shortIDs = append(shortIDs, nodeInfo.REALITYConfig.ShortIds...)
+			if nodeInfo.REALITYConfig.Mldsa65Seed != "" {
+				mldsaSeed = nodeInfo.REALITYConfig.Mldsa65Seed
+			}
 		} else {
-			private_key = config.REALITYConfigs.PrivateKey
+			privateKey = config.REALITYConfigs.PrivateKey
 		}
 		streamSetting.REALITYSettings = &conf.REALITYConfig{
 			Show:         config.REALITYConfigs.Show,
 			Dest:         dest,
 			Xver:         config.REALITYConfigs.ProxyProtocolVer,
 			ServerNames:  config.REALITYConfigs.ServerNames,
-			PrivateKey:   private_key,
+			PrivateKey:   privateKey,
 			MinClientVer: config.REALITYConfigs.MinClientVer,
 			MaxClientVer: config.REALITYConfigs.MaxClientVer,
 			MaxTimeDiff:  config.REALITYConfigs.MaxTimeDiff,
-			ShortIds:     append(config.REALITYConfigs.ShortIds, nodeInfo.REALITYConfig.ShortIds...),
+			ShortIds:     shortIDs,
+			Mldsa65Seed:  mldsaSeed,
 		}
 	}
 
@@ -349,4 +394,105 @@ func buildTrojanFallbacks(fallbackConfigs []*FallBackConfig) ([]*conf.TrojanInbo
 		}
 	}
 	return trojanFallBacks, nil
+}
+
+// normalizeRealityDest turns a panel dest into host:port. A blank port,
+// including the "sni:" form produced when server_port is an empty string,
+// becomes 443. A dest that already has a port is kept.
+func normalizeRealityDest(dest string) (string, error) {
+	dest = strings.TrimSpace(dest)
+	if dest == "" {
+		return "", fmt.Errorf("REALITY dest is empty")
+	}
+	host, port, err := stdnet.SplitHostPort(dest)
+	if err != nil {
+		if strings.Contains(dest, " ") {
+			return "", fmt.Errorf("REALITY dest %q is invalid", dest)
+		}
+		return stdnet.JoinHostPort(dest, "443"), nil
+	}
+	if port == "" {
+		if host == "" {
+			return "", fmt.Errorf("REALITY dest %q is invalid", dest)
+		}
+		return stdnet.JoinHostPort(host, "443"), nil
+	}
+	if host == "" {
+		return "", fmt.Errorf("REALITY dest %q is invalid", dest)
+	}
+	return dest, nil
+}
+
+func marshalRealityDest(dest string) (json.RawMessage, error) {
+	normalized, err := normalizeRealityDest(dest)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := json.Marshal(normalized)
+	if err != nil {
+		return nil, fmt.Errorf("marshal REALITY dest %s: %w", normalized, err)
+	}
+	return raw, nil
+}
+
+// removedMKCPHeaders are the mKCP camouflage types xray-core v26 dropped.
+// The KCP config builder ignores header entirely, so accepting one would
+// start a plain mKCP listener that those clients cannot speak.
+var removedMKCPHeaders = map[string]struct{}{
+	"srtp":         {},
+	"utp":          {},
+	"wechat":       {},
+	"wechat-video": {},
+	"dtls":         {},
+	"tls":          {},
+	"wireguard":    {},
+	"dns":          {},
+}
+
+// ValidateTransportHeader rejects a removed mKCP header instead of letting
+// the node come up as header type none. "none" (and an empty header) is the
+// only remaining mKCP header. TCP "http" obfuscation is unchanged.
+func ValidateTransportHeader(network string, header json.RawMessage) error {
+	headerType, err := transportHeaderType(header)
+	if err != nil {
+		if isKCPNetwork(network) {
+			return fmt.Errorf("mKCP header config is invalid JSON: %w", err)
+		}
+		return nil
+	}
+	if headerType == "" || headerType == "none" || headerType == "noop" {
+		return nil
+	}
+	if isKCPNetwork(network) || removedMKCPHeader(headerType) {
+		return fmt.Errorf("mKCP header type %q is not supported on xray-core v26: camouflage headers were removed and are no longer applied (srtp, utp, wechat, wechat-video, dtls, tls, wireguard, dns). Set the node header type to none. Refusing to start so clients are not left talking to a plain mKCP listener", headerType)
+	}
+	return nil
+}
+
+func isKCPNetwork(network string) bool {
+	switch strings.ToLower(strings.TrimSpace(network)) {
+	case "kcp", "mkcp":
+		return true
+	default:
+		return false
+	}
+}
+
+func removedMKCPHeader(headerType string) bool {
+	_, ok := removedMKCPHeaders[headerType]
+	return ok
+}
+
+func transportHeaderType(header json.RawMessage) (string, error) {
+	trimmed := strings.TrimSpace(string(header))
+	if trimmed == "" || trimmed == "null" {
+		return "", nil
+	}
+	var probe struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal([]byte(trimmed), &probe); err != nil {
+		return "", err
+	}
+	return strings.ToLower(strings.TrimSpace(probe.Type)), nil
 }

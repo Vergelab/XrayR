@@ -28,8 +28,15 @@ func OutboundBuilder(config *Config, nodeInfo *api.NodeInfo, tag string) (*core.
 			domainStrategy = "UseIP"
 		}
 	}
+	// xray-core v26 blocks private/loopback destinations by default for
+	// vless, vmess, trojan and shadowsocks. An explicit allow keeps the
+	// exit behavior nodes had on 0.1: user traffic may still reach any
+	// address, including RFC1918 and localhost.
 	proxySetting := &conf.FreedomConfig{
 		DomainStrategy: domainStrategy,
+		FinalRules: []*conf.FreedomFinalRuleConfig{
+			{Action: "allow"},
+		},
 	}
 	// Used for Shadowsocks-Plugin
 	if nodeInfo.NodeType == "dokodemo-door" {

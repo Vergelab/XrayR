@@ -106,6 +106,22 @@ func (p *Panel) loadCore(panelConfig *Config) *core.Instance {
 	}
 	var inBoundConfig []*core.InboundHandlerConfig
 	for _, config := range coreCustomInboundConfig {
+		if config.StreamSetting != nil {
+			network := ""
+			if config.StreamSetting.Network != nil {
+				network = string(*config.StreamSetting.Network)
+			}
+			if config.StreamSetting.KCPSettings != nil {
+				if err := controller.ValidateTransportHeader(network, config.StreamSetting.KCPSettings.HeaderConfig); err != nil {
+					log.Panicf("Custom inbound: %s", err)
+				}
+			}
+			if config.StreamSetting.TCPSettings != nil {
+				if err := controller.ValidateTransportHeader("tcp", config.StreamSetting.TCPSettings.HeaderConfig); err != nil {
+					log.Panicf("Custom inbound: %s", err)
+				}
+			}
+		}
 		oc, err := config.Build()
 		if err != nil {
 			log.Panicf("Failed to understand Inbound config, Please check: https://xtls.github.io/config/inbound.html for help: %s", err)

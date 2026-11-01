@@ -97,7 +97,7 @@ jobs:
       GOARCH: ${{ matrix.goarch }}
       GOARM: ${{ matrix.goarm }}
       CGO_ENABLED: 0
-      XRAYR_VERSION: "0.1"
+      XRAYR_VERSION: "0.2"
     steps:
       - name: Checkout codebase
         uses: actions/checkout@v3
@@ -112,7 +112,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v3
         with:
-          go-version: '^1.21'
+          go-version: '1.27.3'
 
       - name: Get project dependencies
         run: go mod download
