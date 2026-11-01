@@ -55,6 +55,15 @@ Nodes:
           Path: # HTTP PATH, Empty for any
           Dest: 80 # Required, Destination of fallback, check https://xtls.github.io/config/features/fallback.html for details.
           ProxyProtocolVer: 0 # Send PROXY protocol version, 0 for disable
+      # 接受只有 X25519、没有 X25519MLKEM768 的 REALITY ClientHello。默认 true，省略也是 true。
+      # Accepts REALITY ClientHellos that offer only X25519 (no X25519MLKEM768). Default true, including when this key is omitted.
+      # 打开后 chrome / firefox / safari / ios / edge / qq 都能连上。已经带 X25519MLKEM768 的客户端仍然协商这个混合组，不会降级成纯 X25519。
+      # When on, chrome / firefox / safari / ios / edge / qq can connect. Clients that already send X25519MLKEM768 still negotiate that hybrid group.
+      # 代价：带对 shortId 的非 PQ hello 会完成 REALITY，而不再被转到伪装站。这和上游 Xray v26.10.31 不同，主动探测可以据此把节点和上游区分开。设为 false 就恢复上游行为（只有 chrome / firefox / safari 这类带混合组的指纹能过）。
+      # Trade-off: a non-PQ hello with a valid shortId completes REALITY instead of falling through to the decoy, unlike upstream Xray v26.10.31, so an active probe can tell them apart. false restores upstream.
+      # android / 360 两种模式都不支持（没有 TLS 1.3 key share）。同一进程多个节点取值不一致时用第一个节点的值。热重载在新监听开始前生效。这个开关是进程级的，因为 xray-core 的 REALITY protobuf 没有逐入站字段。
+      # android / 360 work in neither mode (no TLS 1.3 key share). If nodes in one process disagree, the first node's value is used. Hot reload applies it before the new listeners start. The switch is process-wide because xray-core's REALITY protobuf has no per-inbound field.
+      REALITYAllowNonPQClients: true
       EnableREALITY: false # 本地 REALITY 开关。DisableLocalREALITYConfig 为 true 时，密钥和 dest 以面板为准。
       DisableLocalREALITYConfig: true # 从面板拉取 REALITY（Xboard tls=2）。面板声明了 REALITY 但这里没生效时，节点会拒绝启动，不会退回 TLS 或明文。
       REALITYConfigs: # 必须保留这一段（可以为空字段）。Show 从这里读；dest / 私钥 / shortId 来自面板。

@@ -2,14 +2,14 @@
 
 Xray backend maintained by Vergelab. One process can serve several panels and nodes. The command and binary name stay `XrayR`, so existing install paths, systemd units, and scripts keep working.
 
-Current version: **0.2**
+Current version: **0.3**
 
 - Source: https://github.com/Vergelab/XrayR
 - Install scripts and releases: https://github.com/Vergelab/xrayr-release
 - Container image: `ghcr.io/vergelab/xrayr`
 - 中文: [README.md](README.md)
 
-`XrayR version` prints `XrayR 0.2 (Vergelab)`.
+`XrayR version` prints `XrayR 0.3 (Vergelab)`.
 
 ## Features
 
@@ -95,6 +95,7 @@ The shipped `route.json` sends all TCP/UDP to `direct`. `custom_outbound.json` i
 - Each `RuleListPath` line is an unanchored regular expression (`.` matches any character) and is a block rule. A line that does not compile is skipped and logged.
 - An empty panel `flow` uses local `ApiConfig.VlessFlow`. The NewV2board example sets `xtls-rprx-vision` and `DisableLocalREALITYConfig: true`. If the panel says REALITY and it was not applied, the node build fails instead of falling back to TLS or plaintext.
 - The API token stays a query parameter. Xboard 0.1.1-dev validates `token` with Laravel `$request->validate`, which reads the query string and body, not a header.
+- `ControllerConfig.REALITYAllowNonPQClients` defaults to true, including when the key is omitted. REALITY in xray-core v26.10.31 forwards a ClientHello that lacks `X25519MLKEM768` to the decoy, so edge, ios, qq, mihomo's default hello, and sing-box cannot connect; only chrome, firefox, and safari can. With the option on, an X25519-only hello is authenticated with that X25519 share. A client that still sends `X25519MLKEM768` keeps that hybrid group for the TLS handshake. The trade-off is that a non-PQ hello with a valid shortId completes REALITY instead of falling through to the decoy, so an active probe can tell this node apart from upstream Xray. Set it to false to match upstream. android and 360 work in neither mode: they have no TLS 1.3 key share. The value is process-wide, because xray-core's REALITY protobuf has no per-inbound field; if nodes in one process disagree, the first node's value is used and a warning is logged. Hot reload applies the new value before the new listeners start.
 
 ## Disclaimer
 

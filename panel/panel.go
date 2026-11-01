@@ -13,6 +13,7 @@ import (
 
 	"dario.cat/mergo"
 	"github.com/r3labs/diff/v2"
+	"github.com/xtls/reality"
 	"github.com/xtls/xray-core/app/proxyman"
 	"github.com/xtls/xray-core/app/stats"
 	"github.com/xtls/xray-core/common/serial"
@@ -180,6 +181,10 @@ func (p *Panel) loadCore(panelConfig *Config) *core.Instance {
 func (p *Panel) Start() {
 	p.access.Lock()
 	defer p.access.Unlock()
+	// Before any listener accepts. Hot reload constructs a new Panel and
+	// calls Start again, so the flag follows config.yml. The handshake
+	// reads it per connection.
+	applyREALITYAllowNonPQ(p.panelConfig.NodesConfig)
 	log.Print("Start the panel..")
 	// Load Core
 	server := p.loadCore(p.panelConfig)
@@ -211,12 +216,7 @@ func (p *Panel) Start() {
 		}
 		var controllerService service.Service
 		// Register controller service
-		controllerConfig := getDefaultControllerConfig()
-		if nodeConfig.ControllerConfig != nil {
-			if err := mergo.Merge(controllerConfig, nodeConfig.ControllerConfig, mergo.WithOverride); err != nil {
-				log.Panicf("Read Controller Config Failed")
-			}
-		}
+		controllerConfig := mergeControllerConfig(nodeConfig.ControllerConfig)
 		controllerService = controller.New(server, apiClient, controllerConfig, nodeConfig.PanelType)
 		p.Service = append(p.Service, controllerService)
 
@@ -245,6 +245,53 @@ func (p *Panel) Close() {
 	p.Service = nil
 	p.Server.Close()
 	p.Running = false
+}
+
+func mergeControllerConfig(node *controller.Config) *controller.Config {
+	merged := getDefaultControllerConfig()
+	if node != nil {
+		if err := mergo.Merge(merged, node, mergo.WithOverride); err != nil {
+			log.Panicf("Read Controller Config Failed")
+		}
+	}
+	return merged
+}
+
+// resolveREALITYAllowNonPQ collapses per-node settings into the one value
+// the process can apply. xray-core's REALITY config is a protobuf struct
+// with no extension point, so GetREALITYConfig never copies a per-inbound
+// flag. The first node wins; later nodes that disagree are reported by the
+// caller. A nil field means the default, true.
+func resolveREALITYAllowNonPQ(nodes []*NodesConfig) (allow bool, mixed bool) {
+	allow = true
+	seen := false
+	for _, node := range nodes {
+		var cfg *controller.Config
+		if node != nil {
+			cfg = node.ControllerConfig
+		}
+		value := true
+		if cfg != nil {
+			value = cfg.AllowsNonPQClients()
+		}
+		if !seen {
+			allow = value
+			seen = true
+			continue
+		}
+		if value != allow {
+			mixed = true
+		}
+	}
+	return allow, mixed
+}
+
+func applyREALITYAllowNonPQ(nodes []*NodesConfig) {
+	allow, mixed := resolveREALITYAllowNonPQ(nodes)
+	if mixed {
+		log.Printf("REALITYAllowNonPQClients differs across nodes; xray-core has no per-inbound field for it, using the first node's value: %v", allow)
+	}
+	reality.SetAllowNonPQClients(allow)
 }
 
 func parseConnectionConfig(c *ConnectionConfig) (policy *conf.Policy) {

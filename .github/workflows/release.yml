@@ -97,7 +97,7 @@ jobs:
       GOARCH: ${{ matrix.goarch }}
       GOARM: ${{ matrix.goarm }}
       CGO_ENABLED: 0
-      XRAYR_VERSION: "0.2"
+      XRAYR_VERSION: "0.3"
     steps:
       - name: Checkout codebase
         uses: actions/checkout@v4
@@ -112,7 +112,7 @@ jobs:
             ver="${ver#v}"
           fi
           if [ -z "$ver" ]; then
-            ver=0.2
+            ver=0.3
           fi
           echo "XRAYR_VERSION=$ver" >> "$GITHUB_ENV"
           echo "XrayR version: $ver"

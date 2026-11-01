@@ -28,4 +28,5 @@ jobs:
             ./common/rule \
             ./common/serverstatus \
             ./panel \
-            ./service/controller
+            ./service/controller \
+            github.com/xtls/reality
