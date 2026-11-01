@@ -19,6 +19,9 @@ import (
 )
 
 func TestController(t *testing.T) {
+	if os.Getenv("XRAYR_LIVE_PANEL") == "" {
+		t.Skip("skipping: set XRAYR_LIVE_PANEL=1 to run against a live panel")
+	}
 	serverConfig := &conf.Config{
 		Stats:     &conf.StatsConfig{},
 		LogConfig: &conf.LogConfig{LogLevel: "debug"},
@@ -40,10 +43,10 @@ func TestController(t *testing.T) {
 	// 	}}
 
 	server, err := core.New(config)
-	defer server.Close()
 	if err != nil {
-		t.Errorf("failed to create instance: %s", err)
+		t.Fatalf("failed to create instance: %s", err)
 	}
+	defer server.Close()
 	if err = server.Start(); err != nil {
 		t.Errorf("Failed to start instance: %s", err)
 	}
@@ -75,7 +78,7 @@ func TestController(t *testing.T) {
 
 	{
 		osSignals := make(chan os.Signal, 1)
-		signal.Notify(osSignals, os.Interrupt, os.Kill, syscall.SIGTERM)
+		signal.Notify(osSignals, os.Interrupt, syscall.SIGTERM)
 		<-osSignals
 	}
 }

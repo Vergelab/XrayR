@@ -2,6 +2,7 @@ package newV2board
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -25,19 +27,23 @@ import (
 
 // APIClient create an api client to the panel.
 type APIClient struct {
-	client        *resty.Client
-	APIHost       string
-	NodeID        int
-	Key           string
-	NodeType      string
-	EnableVless   bool
-	VlessFlow     string
-	SpeedLimit    float64
-	DeviceLimit   int
-	LocalRuleList []api.DetectRule
-	resp          atomic.Value
-	eTags         map[string]string
-	AliveMap      *AliveMap
+	client               *resty.Client
+	APIHost              string
+	NodeID               int
+	Key                  string
+	NodeType             string
+	EnableVless          bool
+	VlessFlow            string
+	SpeedLimit           float64
+	DeviceLimit          int
+	LocalRuleList        []api.DetectRule
+	resp                 atomic.Value
+	eTags                map[string]string
+	etagMu               sync.Mutex
+	AliveMap             *AliveMap
+	aliveMu              sync.Mutex
+	pushInterval         atomic.Int64
+	alivelistUnsupported sync.Once
 }
 
 // New create an api instance
@@ -67,6 +73,10 @@ func New(apiConfig *api.Config) *APIClient {
 		}
 	}()
 
+	// Xboard 0.1.1-dev (cedar2025/Xboard d73f0decec) checks the token with
+	// $request->validate(['token' => required]). Laravel's validate() reads
+	// the query string and the body, not a header, so a header-only token is
+	// rejected. The token stays a query parameter.
 	client.SetQueryParams(map[string]string{
 		"node_id":   strconv.Itoa(apiConfig.NodeID),
 		"node_type": strings.ToLower(nodeType_for_requests),
@@ -108,14 +118,12 @@ func readLocalRuleList(path string) (LocalRuleList []api.DetectRule) {
 
 		// read line by line
 		for fileScanner.Scan() {
-			LocalRuleList = append(LocalRuleList, api.DetectRule{
-				ID:      -1,
-				Pattern: regexp.MustCompile(fileScanner.Text()),
-			})
+			if rule, ok := api.CompileRule(-1, fileScanner.Text()); ok {
+				LocalRuleList = append(LocalRuleList, rule)
+			}
 		}
-		// handle first encountered error while reading
 		if err := fileScanner.Err(); err != nil {
-			log.Fatalf("Error while reading file: %s", err)
+			log.Printf("Error while reading file: %s", err)
 			return
 		}
 	}
@@ -138,6 +146,9 @@ func (c *APIClient) assembleURL(path string) string {
 }
 
 func (c *APIClient) parseResponse(res *resty.Response, path string, err error) (*simplejson.Json, error) {
+	if nerr := api.NilResponse(res, err); nerr != nil {
+		return nil, fmt.Errorf("request %s failed: %w", c.assembleURL(path), nerr)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("request %s failed: %v", c.assembleURL(path), err)
 	}
@@ -159,31 +170,37 @@ func (c *APIClient) GetNodeInfo() (nodeInfo *api.NodeInfo, err error) {
 	server := new(serverConfig)
 	path := "/api/v1/server/UniProxy/config"
 
+	c.etagMu.Lock()
+	nodeETag := c.eTags["node"]
+	c.etagMu.Unlock()
 	res, err := c.client.R().
-		SetHeader("If-None-Match", c.eTags["node"]).
+		SetHeader("If-None-Match", nodeETag).
 		ForceContentType("application/json").
 		Get(path)
+	if nerr := api.NilResponse(res, err); nerr != nil {
+		return nil, fmt.Errorf("request %s failed: %w", c.assembleURL(path), nerr)
+	}
 
 	// Etag identifier for a specific version of a resource. StatusCode = 304 means no changed
 	if res.StatusCode() == 304 {
 		return nil, errors.New(api.NodeNotModified)
-	}
-	// update etag
-	if res.Header().Get("Etag") != "" && res.Header().Get("Etag") != c.eTags["node"] {
-		c.eTags["node"] = res.Header().Get("Etag")
 	}
 
 	nodeInfoResp, err := c.parseResponse(res, path, err)
 	if err != nil {
 		return nil, err
 	}
-	b, _ := nodeInfoResp.Encode()
-	json.Unmarshal(b, server)
+	b, err := nodeInfoResp.Encode()
+	if err != nil {
+		return nil, fmt.Errorf("encode node info failed: %w", err)
+	}
+	if err := json.Unmarshal(b, server); err != nil {
+		return nil, fmt.Errorf("parse node info failed: %s: %w", redactPanelBody(b), err)
+	}
 
 	if server.ServerPort == 0 {
 		return nil, errors.New("server port must > 0")
 	}
-
 	c.resp.Store(server)
 
 	switch c.NodeType {
@@ -198,7 +215,15 @@ func (c *APIClient) GetNodeInfo() (nodeInfo *api.NodeInfo, err error) {
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("parse node info failed: %s, \nError: %v", res.String(), err)
+		return nil, fmt.Errorf("parse node info failed: %s, \nError: %v", redactPanelBody(res.Body()), err)
+	}
+	if etag := res.Header().Get("Etag"); etag != "" {
+		c.etagMu.Lock()
+		c.eTags["node"] = etag
+		c.etagMu.Unlock()
+	}
+	if server.BaseConfig.PushInterval > 0 {
+		c.pushInterval.Store(int64(server.BaseConfig.PushInterval))
 	}
 
 	return nodeInfo, nil
@@ -206,7 +231,6 @@ func (c *APIClient) GetNodeInfo() (nodeInfo *api.NodeInfo, err error) {
 
 // GetUserList will pull user form panel
 func (c *APIClient) GetUserList() (UserList *[]api.UserInfo, err error) {
-	var users []*user
 	path := "/api/v1/server/UniProxy/user"
 
 	switch c.NodeType {
@@ -216,30 +240,61 @@ func (c *APIClient) GetUserList() (UserList *[]api.UserInfo, err error) {
 		return nil, fmt.Errorf("unsupported node type: %s", c.NodeType)
 	}
 
+	c.etagMu.Lock()
+	userETag := c.eTags["users"]
+	c.etagMu.Unlock()
 	res, err := c.client.R().
-		SetHeader("If-None-Match", c.eTags["users"]).
+		SetHeader("If-None-Match", userETag).
 		ForceContentType("application/json").
 		Get(path)
 
-	_, _ = c.GetUserAlive()
+	if _, aliveErr := c.GetUserAlive(); aliveErr != nil {
+		log.Printf("user alive list: %v", aliveErr)
+	}
 
+	if nerr := api.NilResponse(res, err); nerr != nil {
+		return nil, fmt.Errorf("request %s failed: %w", c.assembleURL(path), nerr)
+	}
 	// Etag identifier for a specific version of a resource. StatusCode = 304 means no changed
 	if res.StatusCode() == 304 {
 		return nil, errors.New(api.UserNotModified)
-	}
-	// update etag
-	if res.Header().Get("Etag") != "" && res.Header().Get("Etag") != c.eTags["users"] {
-		c.eTags["users"] = res.Header().Get("Etag")
 	}
 
 	usersResp, err := c.parseResponse(res, path, err)
 	if err != nil {
 		return nil, err
 	}
-	b, _ := usersResp.Get("users").Encode()
-	json.Unmarshal(b, &users)
+	b, err := usersResp.Get("users").Encode()
+	if err != nil {
+		return nil, fmt.Errorf("encode user list failed: %w", err)
+	}
+	userList, err := c.usersFromJSON(b)
+	if err != nil {
+		return nil, err
+	}
+	if etag := res.Header().Get("Etag"); etag != "" {
+		c.etagMu.Lock()
+		c.eTags["users"] = etag
+		c.etagMu.Unlock()
+	}
+	return userList, nil
+}
+
+// usersFromJSON accepts a user array, JSON null, or an empty array.
+// null and [] both mean "no users", which removes every user on the node.
+func (c *APIClient) usersFromJSON(raw []byte) (*[]api.UserInfo, error) {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" || trimmed == "[]" {
+		empty := make([]api.UserInfo, 0)
+		return &empty, nil
+	}
+	var users []*user
+	if err := json.Unmarshal(raw, &users); err != nil {
+		return nil, fmt.Errorf("parse user list failed: %w", err)
+	}
 	if len(users) == 0 {
-		return nil, errors.New("users is null")
+		empty := make([]api.UserInfo, 0)
+		return &empty, nil
 	}
 
 	var deviceLimit int = 0
@@ -270,32 +325,73 @@ func (c *APIClient) GetUserList() (UserList *[]api.UserInfo, err error) {
 
 		userList = append(userList, u)
 	}
-
 	return &userList, nil
 }
 
-// GetUserAlive will fetch the alive_ip count for users
+// PushInterval is the panel base_config.push_interval in seconds, or 0 when
+// the panel did not send one.
+func (c *APIClient) PushInterval() int {
+	return int(c.pushInterval.Load())
+}
+
+// AliveSnapshot copies the last successful alive map. A failed poll does not
+// clear it.
+func (c *APIClient) AliveSnapshot() map[int]int {
+	c.aliveMu.Lock()
+	defer c.aliveMu.Unlock()
+	if c.AliveMap == nil || c.AliveMap.Alive == nil {
+		return map[int]int{}
+	}
+	cp := make(map[int]int, len(c.AliveMap.Alive))
+	for k, v := range c.AliveMap.Alive {
+		cp[k] = v
+	}
+	return cp
+}
+
+// InvalidateNodeETag forces the next config poll to ignore 304. Call this
+// when a parsed config could not be applied, so the next poll retries it.
+func (c *APIClient) InvalidateNodeETag() {
+	c.etagMu.Lock()
+	delete(c.eTags, "node")
+	c.etagMu.Unlock()
+}
+
+// GetUserAlive will fetch the alive_ip count for users.
+// A 404 means this panel has no alivelist; that is logged once and the last
+// good map is kept. Any other failure is logged by the caller and also keeps
+// the last good map.
 func (c *APIClient) GetUserAlive() (map[int]int, error) {
 	const path = "/api/v1/server/UniProxy/alivelist"
 	r, err := c.client.R().
 		ForceContentType("application/json").
 		Get(path)
+	if nerr := api.NilResponse(r, err); nerr != nil {
+		return c.AliveSnapshot(), fmt.Errorf("alivelist request failed: %w", nerr)
+	}
+	if r.StatusCode() == 404 {
+		c.alivelistUnsupported.Do(func() {
+			log.Printf("panel alivelist returned 404; device limits use local IPs only")
+		})
+		return c.AliveSnapshot(), nil
+	}
 	if err != nil || r.StatusCode() > 399 {
-		c.AliveMap.Alive = make(map[int]int)
-		return nil, nil
+		if err == nil {
+			err = fmt.Errorf("alivelist status %d", r.StatusCode())
+		}
+		return c.AliveSnapshot(), err
 	}
-
-	if r != nil {
-		defer r.RawResponse.Body.Close()
-	} else {
-		return nil, fmt.Errorf("received nil response")
+	parsed := &AliveMap{}
+	if err := json.Unmarshal(r.Body(), parsed); err != nil {
+		return c.AliveSnapshot(), fmt.Errorf("unmarshal user alive list error: %s", err)
 	}
-	c.AliveMap = &AliveMap{}
-	if err := json.Unmarshal(r.Body(), c.AliveMap); err != nil {
-		return nil, fmt.Errorf("unmarshal user alive list error: %s", err)
+	if parsed.Alive == nil {
+		parsed.Alive = map[int]int{}
 	}
-
-	return c.AliveMap.Alive, nil
+	c.aliveMu.Lock()
+	c.AliveMap = parsed
+	c.aliveMu.Unlock()
+	return c.AliveSnapshot(), nil
 }
 
 // ReportUserTraffic reports the user traffic
@@ -309,11 +405,17 @@ func (c *APIClient) ReportUserTraffic(userTraffic *[]api.UserTraffic) error {
 	}
 
 	res, err := c.client.R().SetBody(data).ForceContentType("application/json").Post(path)
-	_, err = c.parseResponse(res, path, err)
+	parsed, err := c.parseResponse(res, path, err)
 	if err != nil {
 		return err
 	}
-
+	body, err := parsed.Encode()
+	if err != nil {
+		return fmt.Errorf("encode push response: %w", err)
+	}
+	if err := panelBodyStatus(body); err != nil {
+		return fmt.Errorf("push rejected: %w", err)
+	}
 	return nil
 }
 
@@ -325,10 +427,9 @@ func (c *APIClient) GetNodeRule() (*[]api.DetectRule, error) {
 
 	for i := range routes {
 		if routes[i].Action == "block" {
-			ruleList = append(ruleList, api.DetectRule{
-				ID:      i,
-				Pattern: regexp.MustCompile(strings.Join(routes[i].Match, "|")),
-			})
+			if rule, ok := api.CompileRule(i, strings.Join(routes[i].Match, "|")); ok {
+				ruleList = append(ruleList, rule)
+			}
 		}
 	}
 
@@ -350,12 +451,17 @@ func (c *APIClient) ReportNodeOnlineUsers(onlineUserList *[]api.OnlineUser) erro
 
 	path := "/api/v1/server/UniProxy/alive"
 	res, err := c.client.R().SetBody(data).ForceContentType("application/json").Post(path)
-	_, err = c.parseResponse(res, path, err)
-	// 面板无对应接口时先不报错
+	parsed, err := c.parseResponse(res, path, err)
 	if err != nil {
-		return nil
+		return err
 	}
-
+	body, err := parsed.Encode()
+	if err != nil {
+		return fmt.Errorf("encode alive response: %w", err)
+	}
+	if err := panelBodyStatus(body); err != nil {
+		return fmt.Errorf("alive rejected: %w", err)
+	}
 	return nil
 }
 
@@ -457,7 +563,7 @@ func (c *APIClient) parseV2rayNodeResponse(s *serverConfig) (*api.NodeInfo, erro
 	} else {
 		dest = s.TlsSettings.Sni
 	}
-	realityDest, err := realityDestFromPanel(dest, s.TlsSettings.ServerPort)
+	realityDest, err := realityDestFromPanel(dest, string(s.TlsSettings.ServerPort))
 	if err != nil && s.Tls == 2 {
 		return nil, err
 	}
@@ -515,6 +621,11 @@ func (c *APIClient) parseV2rayNodeResponse(s *serverConfig) (*api.NodeInfo, erro
 		}
 	}
 
+	flow := strings.TrimSpace(s.VlessFlow)
+	if flow == "" {
+		flow = strings.TrimSpace(c.VlessFlow)
+	}
+
 	// Create GeneralNodeInfo
 	return &api.NodeInfo{
 		NodeType:          c.NodeType,
@@ -526,7 +637,7 @@ func (c *APIClient) parseV2rayNodeResponse(s *serverConfig) (*api.NodeInfo, erro
 		Path:              s.NetworkSettings.Path,
 		Host:              host,
 		EnableVless:       c.EnableVless,
-		VlessFlow:         s.VlessFlow,
+		VlessFlow:         flow,
 		ServiceName:       s.NetworkSettings.ServiceName,
 		Header:            header,
 		EnableREALITY:     enableREALITY,
@@ -557,6 +668,77 @@ func realityDestFromPanel(dest, serverPort string) (string, error) {
 		return stdnet.JoinHostPort(host, port), nil
 	}
 	return stdnet.JoinHostPort(dest, port), nil
+}
+
+// panelBodyStatus fails the call when the JSON body carries a status that
+// is not success. Bodies without a status field are accepted: HTTP status
+// was already checked. Xboard 0.1.1 returns {"status":"success",...} after
+// queueing TrafficFetchJob; a queued 200 is still success here, and bytes
+// are put back only when this check or the HTTP status fails.
+func panelBodyStatus(body []byte) error {
+	body = bytes.TrimSpace(body)
+	if len(body) == 0 {
+		return nil
+	}
+	var probe map[string]any
+	if err := json.Unmarshal(body, &probe); err != nil {
+		return nil
+	}
+	status, ok := probe["status"]
+	if !ok || status == nil {
+		return nil
+	}
+	switch s := status.(type) {
+	case string:
+		switch strings.ToLower(strings.TrimSpace(s)) {
+		case "success", "ok", "true":
+			return nil
+		default:
+			return fmt.Errorf("panel status %q", s)
+		}
+	case bool:
+		if s {
+			return nil
+		}
+		return fmt.Errorf("panel status false")
+	default:
+		return fmt.Errorf("panel status %v", s)
+	}
+}
+
+var privateKeyRE = regexp.MustCompile(`(?i)("private_key"\s*:\s*")([^"]*)(")`)
+
+func redactPanelBody(body []byte) string {
+	if len(body) == 0 {
+		return ""
+	}
+	var v any
+	if err := json.Unmarshal(body, &v); err != nil {
+		return privateKeyRE.ReplaceAllString(string(body), `${1}[redacted]${3}`)
+	}
+	redactSecrets(v)
+	out, err := json.Marshal(v)
+	if err != nil {
+		return "[redacted]"
+	}
+	return string(out)
+}
+
+func redactSecrets(v any) {
+	switch t := v.(type) {
+	case map[string]any:
+		for k, val := range t {
+			if strings.EqualFold(k, "private_key") {
+				t[k] = "[redacted]"
+				continue
+			}
+			redactSecrets(val)
+		}
+	case []any:
+		for _, item := range t {
+			redactSecrets(item)
+		}
+	}
 }
 
 func (s *serverConfig) parseDNSConfig() (nameServerList []*conf.NameServerConfig) {

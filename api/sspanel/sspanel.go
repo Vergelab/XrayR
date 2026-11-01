@@ -112,14 +112,13 @@ func readLocalRuleList(path string) (LocalRuleList []api.DetectRule) {
 
 		// read line by line
 		for fileScanner.Scan() {
-			LocalRuleList = append(LocalRuleList, api.DetectRule{
-				ID:      -1,
-				Pattern: regexp.MustCompile(fileScanner.Text()),
-			})
+			if rule, ok := api.CompileRule(-1, fileScanner.Text()); ok {
+				LocalRuleList = append(LocalRuleList, rule)
+			}
 		}
 		// handle first encountered error while reading
 		if err := fileScanner.Err(); err != nil {
-			log.Fatalf("Error while reading file: %s", err)
+			log.Printf("Error while reading file: %s", err)
 			return
 		}
 	}
@@ -142,6 +141,9 @@ func (c *APIClient) assembleURL(path string) string {
 }
 
 func (c *APIClient) parseResponse(res *resty.Response, path string, err error) (*Response, error) {
+	if nerr := api.NilResponse(res, err); nerr != nil {
+		return nil, fmt.Errorf("request %s failed: %s", c.assembleURL(path), nerr)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("request %s failed: %s", c.assembleURL(path), err)
 	}
@@ -168,6 +170,9 @@ func (c *APIClient) GetNodeInfo() (nodeInfo *api.NodeInfo, err error) {
 		ForceContentType("application/json").
 		Get(path)
 	// Etag identifier for a specific version of a resource. StatusCode = 304 means no changed
+	if nerr := api.NilResponse(res, err); nerr != nil {
+		return nil, nerr
+	}
 	if res.StatusCode() == 304 {
 		return nil, errors.New(api.NodeNotModified)
 	}
@@ -237,6 +242,9 @@ func (c *APIClient) GetUserList() (UserList *[]api.UserInfo, err error) {
 		ForceContentType("application/json").
 		Get(path)
 	// Etag identifier for a specific version of a resource. StatusCode = 304 means no changed
+	if nerr := api.NilResponse(res, err); nerr != nil {
+		return nil, nerr
+	}
 	if res.StatusCode() == 304 {
 		return nil, errors.New(api.UserNotModified)
 	}
@@ -354,6 +362,9 @@ func (c *APIClient) GetNodeRule() (*[]api.DetectRule, error) {
 		Get(path)
 
 	// Etag identifier for a specific version of a resource. StatusCode = 304 means no changed
+	if nerr := api.NilResponse(res, err); nerr != nil {
+		return nil, nerr
+	}
 	if res.StatusCode() == 304 {
 		return nil, errors.New(api.RuleNotModified)
 	}
@@ -374,10 +385,9 @@ func (c *APIClient) GetNodeRule() (*[]api.DetectRule, error) {
 	}
 
 	for _, r := range *ruleListResponse {
-		ruleList = append(ruleList, api.DetectRule{
-			ID:      r.ID,
-			Pattern: regexp.MustCompile(r.Content),
-		})
+		if rule, ok := api.CompileRule(r.ID, r.Content); ok {
+			ruleList = append(ruleList, rule)
+		}
 	}
 	return &ruleList, nil
 }

@@ -176,7 +176,7 @@ func (d *DefaultDispatcher) getLink(ctx context.Context) (*transport.Link, *tran
 
 	if user != nil && len(user.Email) > 0 {
 		// Speed Limit and Device Limit
-		bucket, ok, reject := d.Limiter.GetUserBucket(sessionInbound.Tag, user.Email, sessionInbound.Source.Address.IP().String(), sessionInbound.Source.Network == net.Network_TCP)
+		upLimiter, downLimiter, reject := d.Limiter.GetUserBucket(sessionInbound.Tag, user.Email, sessionInbound.Source.Address.IP().String(), sessionInbound.Source.Network == net.Network_TCP)
 		if reject {
 			errors.LogWarning(ctx, "Devices reach the limit: ", user.Email)
 			common.Close(outboundLink.Writer)
@@ -185,9 +185,13 @@ func (d *DefaultDispatcher) getLink(ctx context.Context) (*transport.Link, *tran
 			common.Interrupt(inboundLink.Reader)
 			return nil, nil, newError("Devices reach the limit: ", user.Email)
 		}
-		if ok {
-			inboundLink.Writer = d.Limiter.RateWriter(inboundLink.Writer, bucket)
-			outboundLink.Writer = d.Limiter.RateWriter(outboundLink.Writer, bucket)
+		// inbound writer is upload, outbound writer is download.
+		// CanSpliceCopy 3 (set above) keeps Vision from splicing past these wrappers.
+		if upLimiter != nil {
+			inboundLink.Writer = d.Limiter.RateWriter(inboundLink.Writer, upLimiter)
+		}
+		if downLimiter != nil {
+			outboundLink.Writer = d.Limiter.RateWriter(outboundLink.Writer, downLimiter)
 		}
 
 		p := d.policy.ForLevel(user.Level)
@@ -379,16 +383,22 @@ func (d *DefaultDispatcher) prepareOutboundLink(ctx context.Context, link *trans
 		user = sessionInbound.User
 	}
 	if user != nil && len(user.Email) > 0 && sessionInbound != nil {
-		bucket, ok, reject := d.Limiter.GetUserBucket(sessionInbound.Tag, user.Email, sessionInbound.Source.Address.IP().String(), sessionInbound.Source.Network == net.Network_TCP)
+		upLimiter, downLimiter, reject := d.Limiter.GetUserBucket(sessionInbound.Tag, user.Email, sessionInbound.Source.Address.IP().String(), sessionInbound.Source.Network == net.Network_TCP)
 		if reject {
 			errors.LogWarning(ctx, "Devices reach the limit: ", user.Email)
 			common.Close(link.Writer)
 			common.Interrupt(link.Reader)
 			return nil, newError("Devices reach the limit: ", user.Email)
 		}
-		if ok {
-			link.Reader = d.Limiter.RateReader(link.Reader, bucket)
-			link.Writer = d.Limiter.RateWriter(link.Writer, bucket)
+		// Vision enters here. Reader is upload and writer is download.
+		// v26 splices only when CanSpliceCopy == 2 (then promotes it to 1).
+		// Forcing 3, after the vless inbound may have set 2, keeps these
+		// wrappers on the path so bytes are still counted and rate-limited.
+		if upLimiter != nil {
+			link.Reader = d.Limiter.RateReader(link.Reader, upLimiter)
+		}
+		if downLimiter != nil {
+			link.Writer = d.Limiter.RateWriter(link.Writer, downLimiter)
 		}
 		p := d.policy.ForLevel(user.Level)
 		link.Reader = &buf.TimeoutWrapperReader{Reader: link.Reader}

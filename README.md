@@ -26,11 +26,11 @@ Vergelab 维护的 Xray 后端，用来把一块节点同时接到多种面板�
 | 获取节点信息 | √ | √ | √ | √ |
 | 获取用户信息 | √ | √ | √ | √ |
 | 用户流量统计 | √ | √ | √ | √ |
-| 服务器信息上报 | √ | √ | √ | √ |
+| 服务器信息上报 | √ | √ | √ | √（NewV2board 不上报，接口直接返回成功） |
 | 自动申请 TLS 证书 | √ | √ | √ | √ |
 | 自动续签 TLS 证书 | √ | √ | √ | √ |
 | 在线人数统计 | √ | √ | √ | √ |
-| 在线用户限制 | √ | √ | √ | √ |
+| 在线用户限制 | √ | √ | √ | √（见下方设备数说明） |
 | 审计规则 | √ | √ | √ | √ |
 | 节点端口限速 | √ | √ | √ | √ |
 | 按用户限速 | √ | √ | √ | √ |
@@ -83,6 +83,18 @@ docker run -d --name xrayr --network host \
 ## 配置
 
 示例配置在 [`release/config/config.yml.example`](release/config/config.yml.example)。DNS、路由、入站和出站的字段沿用 Xray 核心的配置格式，示例文件里的注释给出了对应说明。
+
+## 路由
+
+发布包里的 `route.json` 把全部 TCP/UDP 送到 `direct`。`custom_outbound.json` 里的 `direct` 是 freedom 直连，没有 WARP 密钥。以前带示例 WARP 密钥的文件改名为 [`route.json.example`](release/config/route.json.example) 和 [`custom_outbound.json.example`](release/config/custom_outbound.json.example)，不能直接当生产配置。
+
+## NewV2board / Xboard
+
+- 服务器状态不上报。`ReportNodeStatus` 固定返回成功，Xboard 0.1.1 的节点接口没有对应的状态写入。
+- 设备数按「本节点上该用户的不同来源 IP」计算，再叠加面板 alive 数据（如果面板提供）。Xboard 0.1.1-dev 的用户列表没有 `device_limit` 字段，也没有 `alivelist`（请求会 404，只记一次日志）。要限制设备数，在节点配置里写 `DeviceLimit`。用户 JSON 里如果带了 `device_limit`，且本地 `DeviceLimit` 为 0，就用用户上的值。`alivelist` 拉取失败时保留上一份成功的计数，不会清成空表。
+- `RuleListPath` 每一行是未锚定的正则，`.` 匹配任意字符，并且全部当作拦截规则。编译失败的行会跳过并写日志。
+- 面板 `flow` 为空时使用本地 `ApiConfig.VlessFlow`。NewV2board 示例是 `xtls-rprx-vision`，并打开 `DisableLocalREALITYConfig`。面板声明了 REALITY 但没有套用到入站时，节点构建失败，不会退回 TLS 或明文。
+- API token 仍放在查询参数里。Xboard 0.1.1-dev 的 `Server` 中间件用 `$request->validate(['token' => required])`，只认查询参数和请求体，不认 header。
 
 ## 免责声明
 

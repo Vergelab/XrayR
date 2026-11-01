@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -100,14 +99,13 @@ func readLocalRuleList(path string) (LocalRuleList []api.DetectRule) {
 
 		// read line by line
 		for fileScanner.Scan() {
-			LocalRuleList = append(LocalRuleList, api.DetectRule{
-				ID:      -1,
-				Pattern: regexp.MustCompile(fileScanner.Text()),
-			})
+			if rule, ok := api.CompileRule(-1, fileScanner.Text()); ok {
+				LocalRuleList = append(LocalRuleList, rule)
+			}
 		}
 		// handle first encountered error while reading
 		if err := fileScanner.Err(); err != nil {
-			log.Fatalf("Error while reading file: %s", err)
+			log.Printf("Error while reading file: %s", err)
 			return
 		}
 
@@ -132,6 +130,9 @@ func (c *APIClient) assembleURL(path string) string {
 }
 
 func (c *APIClient) parseResponse(res *resty.Response, path string, err error) (*simplejson.Json, error) {
+	if nerr := api.NilResponse(res, err); nerr != nil {
+		return nil, fmt.Errorf("request %s failed: %s", c.assembleURL(path), nerr)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("request %s failed: %s", c.assembleURL(path), err)
 	}
@@ -166,6 +167,9 @@ func (c *APIClient) GetNodeInfo() (nodeInfo *api.NodeInfo, err error) {
 		Get(c.APIHost)
 
 	// Etag identifier for a specific version of a resource. StatusCode = 304 means no changed
+	if nerr := api.NilResponse(res, err); nerr != nil {
+		return nil, nerr
+	}
 	if res.StatusCode() == 304 {
 		return nil, errors.New(api.NodeNotModified)
 	}
@@ -175,6 +179,9 @@ func (c *APIClient) GetNodeInfo() (nodeInfo *api.NodeInfo, err error) {
 	}
 
 	// Etag identifier for a specific version of a resource. StatusCode = 304 means no changed
+	if nerr := api.NilResponse(res, err); nerr != nil {
+		return nil, nerr
+	}
 	if res.StatusCode() == 304 {
 		return nil, errors.New(api.NodeNotModified)
 	}
@@ -204,7 +211,7 @@ func (c *APIClient) GetNodeInfo() (nodeInfo *api.NodeInfo, err error) {
 
 	if err != nil {
 		res, _ := response.MarshalJSON()
-		return nil, fmt.Errorf("Parse node info failed: %s, \nError: %s", string(res), err)
+		return nil, fmt.Errorf("parse node info failed: %s, error: %s", string(res), err)
 	}
 
 	return nodeInfo, nil
@@ -229,6 +236,9 @@ func (c *APIClient) GetUserList() (UserList *[]api.UserInfo, err error) {
 		Get(c.APIHost)
 
 	// Etag identifier for a specific version of a resource. StatusCode = 304 means no changed
+	if nerr := api.NilResponse(res, err); nerr != nil {
+		return nil, nerr
+	}
 	if res.StatusCode() == 304 {
 		return nil, errors.New(api.UserNotModified)
 	}
@@ -238,6 +248,9 @@ func (c *APIClient) GetUserList() (UserList *[]api.UserInfo, err error) {
 	}
 
 	// Etag identifier for a specific version of a resource. StatusCode = 304 means no changed
+	if nerr := api.NilResponse(res, err); nerr != nil {
+		return nil, nerr
+	}
 	if res.StatusCode() == 304 {
 		return nil, errors.New(api.UserNotModified)
 	}
@@ -324,11 +337,9 @@ func (c *APIClient) GetNodeRule() (*[]api.DetectRule, error) {
 	ruleListResponse := c.ConfigResp.Get("routing").Get("rules").GetIndex(1).Get("domain").MustStringArray()
 	for i, rule := range ruleListResponse {
 		rule = strings.TrimPrefix(rule, "regexp:")
-		ruleListItem := api.DetectRule{
-			ID:      i,
-			Pattern: regexp.MustCompile(rule),
+		if ruleItem, ok := api.CompileRule(i, rule); ok {
+			ruleList = append(ruleList, ruleItem)
 		}
-		ruleList = append(ruleList, ruleListItem)
 	}
 	return &ruleList, nil
 }

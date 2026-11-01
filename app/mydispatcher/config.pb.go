@@ -4,6 +4,8 @@
 // 	protoc        v3.19.4
 // source: app/mydispatcher/config.proto
 
+//lint:file-ignore SA1019 generated protobuf still sets the deprecated Exporter field.
+
 package mydispatcher
 
 import (

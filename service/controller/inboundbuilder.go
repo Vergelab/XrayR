@@ -283,7 +283,13 @@ func InboundBuilder(config *Config, nodeInfo *api.NodeInfo, tag string) (*core.I
 		}
 	}
 
-	if !isREALITY && nodeInfo.EnableTLS && config.CertConfig.CertMode != "none" {
+	// The panel said REALITY (tls=2). Do not fall through to TLS or to a
+	// plaintext listener when the REALITY settings were not applied.
+	if nodeInfo.EnableREALITY && !isREALITY {
+		return nil, fmt.Errorf("panel enabled REALITY (tls=2) but REALITY was not applied. Set DisableLocalREALITYConfig: true and keep a REALITYConfigs block so the panel key is used, or set EnableREALITY: true with a complete local REALITYConfigs. Refusing to listen with TLS or without security")
+	}
+
+	if !isREALITY && nodeInfo.EnableTLS && config.CertConfig != nil && config.CertConfig.CertMode != "none" && config.CertConfig.CertMode != "" {
 		streamSetting.Security = "tls"
 		certFile, keyFile, err := getCertFile(config.CertConfig)
 		if err != nil {
@@ -415,10 +421,19 @@ func normalizeRealityDest(dest string) (string, error) {
 		if host == "" {
 			return "", fmt.Errorf("REALITY dest %q is invalid", dest)
 		}
-		return stdnet.JoinHostPort(host, "443"), nil
-	}
-	if host == "" {
+		dest = stdnet.JoinHostPort(host, "443")
+	} else if host == "" {
 		return "", fmt.Errorf("REALITY dest %q is invalid", dest)
+	}
+	return rejectEmptyRealityPort(dest)
+}
+
+// rejectEmptyRealityPort fails the build when dest still has no port.
+// Callers default a blank port to 443 before this check.
+func rejectEmptyRealityPort(dest string) (string, error) {
+	host, port, err := stdnet.SplitHostPort(dest)
+	if err != nil || host == "" || port == "" {
+		return "", fmt.Errorf("REALITY dest %q has an empty port", dest)
 	}
 	return dest, nil
 }

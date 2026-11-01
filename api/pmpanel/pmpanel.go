@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"reflect"
-	"regexp"
 	"strconv"
 	"time"
 
@@ -88,14 +87,13 @@ func readLocalRuleList(path string) (LocalRuleList []api.DetectRule) {
 
 		// read line by line
 		for fileScanner.Scan() {
-			LocalRuleList = append(LocalRuleList, api.DetectRule{
-				ID:      -1,
-				Pattern: regexp.MustCompile(fileScanner.Text()),
-			})
+			if rule, ok := api.CompileRule(-1, fileScanner.Text()); ok {
+				LocalRuleList = append(LocalRuleList, rule)
+			}
 		}
 		// handle first encountered error while reading
 		if err := fileScanner.Err(); err != nil {
-			log.Fatalf("Error while reading file: %s", err)
+			log.Printf("Error while reading file: %s", err)
 			return
 		}
 
@@ -120,6 +118,9 @@ func (c *APIClient) assembleURL(path string) string {
 }
 
 func (c *APIClient) parseResponse(res *resty.Response, path string, err error) (*Response, error) {
+	if nerr := api.NilResponse(res, err); nerr != nil {
+		return nil, fmt.Errorf("request %s failed: %s", c.assembleURL(path), nerr)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("request %s failed: %s", c.assembleURL(path), err)
 	}
@@ -139,7 +140,7 @@ func (c *APIClient) parseResponse(res *resty.Response, path string, err error) (
 
 // GetNodeInfo will pull NodeInfo Config from sspanel
 func (c *APIClient) GetNodeInfo() (nodeInfo *api.NodeInfo, err error) {
-	path := fmt.Sprintf("/api/node")
+	path := "/api/node"
 	var nodeType = ""
 	switch c.NodeType {
 	case "Shadowsocks":
@@ -184,7 +185,7 @@ func (c *APIClient) GetNodeInfo() (nodeInfo *api.NodeInfo, err error) {
 
 	if err != nil {
 		res, _ := json.Marshal(nodeInfoResponse)
-		return nil, fmt.Errorf("Parse node info failed: %s, \nError: %s", string(res), err)
+		return nil, fmt.Errorf("parse node info failed: %s, error: %s", string(res), err)
 	}
 
 	return nodeInfo, nil
@@ -344,10 +345,9 @@ func (c *APIClient) GetNodeRule() (*[]api.DetectRule, error) {
 	}
 
 	for _, r := range *ruleListResponse {
-		ruleList = append(ruleList, api.DetectRule{
-			ID:      r.ID,
-			Pattern: regexp.MustCompile(r.Content),
-		})
+		if rule, ok := api.CompileRule(r.ID, r.Content); ok {
+			ruleList = append(ruleList, rule)
+		}
 	}
 	return &ruleList, nil
 }

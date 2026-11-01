@@ -7,6 +7,8 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+
+	log "github.com/sirupsen/logrus"
 )
 
 var defaultPath string
@@ -32,36 +34,61 @@ func New(certConf *CertConfig) (*LegoCMD, error) {
 	return lego, nil
 }
 
-func (l *LegoCMD) getPath() string {
-	return l.path
+func recoverAsError(r any) error {
+	switch x := r.(type) {
+	case string:
+		return errors.New(x)
+	case error:
+		return x
+	case *log.Entry:
+		if x != nil && x.Message != "" {
+			return errors.New(x.Message)
+		}
+		return errors.New("panic")
+	default:
+		return fmt.Errorf("unknown panic: %v", r)
+	}
 }
 
-func (l *LegoCMD) getCertConfig() *CertConfig {
-	return l.C
+// setDNSEnv exports the provider variables and returns a function that
+// removes them. A value that was already set is restored instead of deleted.
+func (l *LegoCMD) setDNSEnv() func() {
+	if l == nil || l.C == nil || len(l.C.DNSEnv) == 0 {
+		return func() {}
+	}
+	type previous struct {
+		key     string
+		val     string
+		existed bool
+	}
+	saved := make([]previous, 0, len(l.C.DNSEnv))
+	for key, value := range l.C.DNSEnv {
+		k := strings.ToUpper(key)
+		old, existed := os.LookupEnv(k)
+		saved = append(saved, previous{key: k, val: old, existed: existed})
+		_ = os.Setenv(k, value)
+	}
+	return func() {
+		for _, item := range saved {
+			if item.existed {
+				_ = os.Setenv(item.key, item.val)
+			} else {
+				_ = os.Unsetenv(item.key)
+			}
+		}
+	}
 }
 
 // DNSCert cert a domain using DNS API
 func (l *LegoCMD) DNSCert() (CertPath string, KeyPath string, err error) {
-	defer func() (string, string, error) {
-		// Handle any error
+	defer func() {
 		if r := recover(); r != nil {
-			switch x := r.(type) {
-			case string:
-				err = errors.New(x)
-			case error:
-				err = x
-			default:
-				err = errors.New("unknown panic")
-			}
-			return "", "", err
+			CertPath, KeyPath = "", ""
+			err = recoverAsError(r)
 		}
-		return CertPath, KeyPath, nil
 	}()
-
-	// Set Env for DNS configuration
-	for key, value := range l.C.DNSEnv {
-		os.Setenv(strings.ToUpper(key), value)
-	}
+	cleanup := l.setDNSEnv()
+	defer cleanup()
 
 	// First check if the certificate exists
 	CertPath, KeyPath, err = checkCertFile(l.C.CertDomain)
@@ -82,20 +109,11 @@ func (l *LegoCMD) DNSCert() (CertPath string, KeyPath string, err error) {
 
 // HTTPCert cert a domain using http methods
 func (l *LegoCMD) HTTPCert() (CertPath string, KeyPath string, err error) {
-	defer func() (string, string, error) {
-		// Handle any error
+	defer func() {
 		if r := recover(); r != nil {
-			switch x := r.(type) {
-			case string:
-				err = errors.New(x)
-			case error:
-				err = x
-			default:
-				err = errors.New("unknown panic")
-			}
-			return "", "", err
+			CertPath, KeyPath = "", ""
+			err = recoverAsError(r)
 		}
-		return CertPath, KeyPath, nil
 	}()
 
 	// First check if the certificate exists
@@ -119,20 +137,11 @@ func (l *LegoCMD) HTTPCert() (CertPath string, KeyPath string, err error) {
 
 // RenewCert renew a domain cert
 func (l *LegoCMD) RenewCert() (CertPath string, KeyPath string, ok bool, err error) {
-	defer func() (string, string, bool, error) {
-		// Handle any error
+	defer func() {
 		if r := recover(); r != nil {
-			switch x := r.(type) {
-			case string:
-				err = errors.New(x)
-			case error:
-				err = x
-			default:
-				err = errors.New("unknown panic")
-			}
-			return "", "", false, err
+			CertPath, KeyPath, ok = "", "", false
+			err = recoverAsError(r)
 		}
-		return CertPath, KeyPath, ok, nil
 	}()
 
 	ok, err = l.Renew()
