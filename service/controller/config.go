@@ -25,13 +25,10 @@ type Config struct {
 	DisableLocalREALITYConfig bool                             `mapstructure:"DisableLocalREALITYConfig"`
 	EnableREALITY             bool                             `mapstructure:"EnableREALITY"`
 	REALITYConfigs            *REALITYConfig                   `mapstructure:"REALITYConfigs"`
-	// REALITYAllowNonPQClients accepts REALITY ClientHellos that offer
-	// only X25519. Nil means true, including when the key is omitted.
-	// Clients that offer X25519MLKEM768 still negotiate that hybrid group.
-	// The value is process-wide: xray-core's REALITY protobuf cannot carry
-	// it per inbound. Hot reload writes it before the new listeners start.
-	// When nodes in one process disagree, the first node wins and a warning
-	// is logged.
+	// REALITYAllowNonPQClients is deprecated. Set the top-level
+	// REALITYAllowNonPQClients key instead. Still parsed so old configs load.
+	// When the top-level key is omitted, the first node's value wins
+	// (nil means true) and a deprecation warning is logged.
 	REALITYAllowNonPQClients *bool `mapstructure:"REALITYAllowNonPQClients"`
 }
 

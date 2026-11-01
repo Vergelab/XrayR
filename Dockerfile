@@ -3,7 +3,7 @@ FROM golang:1.27.3-alpine AS builder
 WORKDIR /app
 COPY . .
 ENV CGO_ENABLED=0
-ARG XRAYR_VERSION=0.3
+ARG XRAYR_VERSION=0.4
 RUN go mod download \
     && go build -v -o XrayR -trimpath -ldflags "-s -w -buildid= -X github.com/Vergelab/XrayR/cmd.version=${XRAYR_VERSION} -X github.com/Vergelab/XrayR/cmd.buildBy=Vergelab"
 

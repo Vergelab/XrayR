@@ -36,7 +36,13 @@ type Config struct {
 	OutboundConfigPath string            `mapstructure:"OutboundConfigPath"`
 	RouteConfigPath    string            `mapstructure:"RouteConfigPath"`
 	ConnectionConfig   *ConnectionConfig `mapstructure:"ConnectionConfig"`
-	NodesConfig        []*NodesConfig    `mapstructure:"Nodes"`
+	// REALITYAllowNonPQClients accepts REALITY ClientHellos that offer only
+	// X25519. Nil means true, including when the key is omitted. Applied once,
+	// process-wide, at startup and on hot reload. A per-node
+	// ControllerConfig.REALITYAllowNonPQClients is still parsed for old
+	// configs; this key wins when both are set.
+	REALITYAllowNonPQClients *bool          `mapstructure:"REALITYAllowNonPQClients"`
+	NodesConfig              []*NodesConfig `mapstructure:"Nodes"`
 }
 
 type NodesConfig struct {

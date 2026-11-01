@@ -2,7 +2,7 @@
 
 بک‌اند Xray که Vergelab آن را نگهداری می‌کند. نام دستور و فایل اجرایی همچنان `XrayR` است.
 
-نسخهٔ فعلی: **0.3**
+نسخهٔ فعلی: **0.4**
 
 - کد منبع: https://github.com/Vergelab/XrayR
 - اسکریپت نصب و انتشارها: https://github.com/Vergelab/xrayr-release

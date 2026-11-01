@@ -46,7 +46,7 @@ and `dest` negotiates it, the negotiated group stays `X25519MLKEM768`.
 xray-core copies a fixed protobuf (`transport/internet/reality.Config`) into
 `reality.Config` inside `GetREALITYConfig`. That protobuf has no extension
 field, so XrayR cannot set `AllowNonPQClients` per inbound without forking
-xray-core. XrayR calls `SetAllowNonPQClients` from `config.yml` at startup
+xray-core. XrayR calls `SetAllowNonPQClients` from the top-level `REALITYAllowNonPQClients` key in `config.yml` at startup
 and again on hot reload, before listeners accept. Callers that build
 `reality.Config` themselves can still set the struct field; it is OR-ed
 with the process flag.

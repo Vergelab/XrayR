@@ -184,7 +184,7 @@ func (p *Panel) Start() {
 	// Before any listener accepts. Hot reload constructs a new Panel and
 	// calls Start again, so the flag follows config.yml. The handshake
 	// reads it per connection.
-	applyREALITYAllowNonPQ(p.panelConfig.NodesConfig)
+	applyREALITYAllowNonPQ(p.panelConfig)
 	log.Print("Start the panel..")
 	// Load Core
 	server := p.loadCore(p.panelConfig)
@@ -257,12 +257,33 @@ func mergeControllerConfig(node *controller.Config) *controller.Config {
 	return merged
 }
 
-// resolveREALITYAllowNonPQ collapses per-node settings into the one value
-// the process can apply. xray-core's REALITY config is a protobuf struct
-// with no extension point, so GetREALITYConfig never copies a per-inbound
-// flag. The first node wins; later nodes that disagree are reported by the
-// caller. A nil field means the default, true.
-func resolveREALITYAllowNonPQ(nodes []*NodesConfig) (allow bool, mixed bool) {
+// resolveREALITYAllowNonPQ chooses the one process-wide value. xray-core's
+// REALITY config is a protobuf struct with no per-inbound field, so the
+// process can apply only one setting. The top-level key wins when it is
+// set. When it is omitted, per-node ControllerConfig.REALITYAllowNonPQClients
+// is honored the old way: a nil field is true, the first node wins, and
+// mixed is set when a later node disagrees. legacy is set only when the
+// top-level key is absent and at least one node still sets the old key.
+// differ is set when the top-level key is set and some node's explicit
+// value disagrees with it.
+func resolveREALITYAllowNonPQ(cfg *Config) (allow bool, legacy bool, mixed bool, differ bool) {
+	allow = true
+	if cfg != nil && cfg.REALITYAllowNonPQClients != nil {
+		allow = *cfg.REALITYAllowNonPQClients
+		return allow, false, false, nodesDifferFrom(cfg.NodesConfig, allow)
+	}
+	var nodes []*NodesConfig
+	if cfg != nil {
+		nodes = cfg.NodesConfig
+	}
+	allow, mixed, legacy = resolveLegacyREALITYAllowNonPQ(nodes)
+	return allow, legacy, mixed, false
+}
+
+// resolveLegacyREALITYAllowNonPQ is the 0.3 per-node rule. explicit reports
+// whether any node actually set the deprecated key, as opposed to inheriting
+// the default.
+func resolveLegacyREALITYAllowNonPQ(nodes []*NodesConfig) (allow bool, mixed bool, explicit bool) {
 	allow = true
 	seen := false
 	for _, node := range nodes {
@@ -273,6 +294,9 @@ func resolveREALITYAllowNonPQ(nodes []*NodesConfig) (allow bool, mixed bool) {
 		value := true
 		if cfg != nil {
 			value = cfg.AllowsNonPQClients()
+			if cfg.REALITYAllowNonPQClients != nil {
+				explicit = true
+			}
 		}
 		if !seen {
 			allow = value
@@ -283,13 +307,30 @@ func resolveREALITYAllowNonPQ(nodes []*NodesConfig) (allow bool, mixed bool) {
 			mixed = true
 		}
 	}
-	return allow, mixed
+	return allow, mixed, explicit
 }
 
-func applyREALITYAllowNonPQ(nodes []*NodesConfig) {
-	allow, mixed := resolveREALITYAllowNonPQ(nodes)
-	if mixed {
-		log.Printf("REALITYAllowNonPQClients differs across nodes; xray-core has no per-inbound field for it, using the first node's value: %v", allow)
+func nodesDifferFrom(nodes []*NodesConfig, allow bool) bool {
+	for _, node := range nodes {
+		if node == nil || node.ControllerConfig == nil || node.ControllerConfig.REALITYAllowNonPQClients == nil {
+			continue
+		}
+		if *node.ControllerConfig.REALITYAllowNonPQClients != allow {
+			return true
+		}
+	}
+	return false
+}
+
+func applyREALITYAllowNonPQ(cfg *Config) {
+	allow, legacy, mixed, differ := resolveREALITYAllowNonPQ(cfg)
+	switch {
+	case legacy && mixed:
+		log.Printf("ControllerConfig.REALITYAllowNonPQClients is deprecated and differs across nodes; set top-level REALITYAllowNonPQClients instead. Using the first node's value: %v", allow)
+	case legacy:
+		log.Printf("ControllerConfig.REALITYAllowNonPQClients is deprecated; set top-level REALITYAllowNonPQClients instead. Using the first node's value: %v", allow)
+	case differ:
+		log.Printf("top-level REALITYAllowNonPQClients=%v overrides a different ControllerConfig.REALITYAllowNonPQClients; the per-node key is deprecated", allow)
 	}
 	reality.SetAllowNonPQClients(allow)
 }
