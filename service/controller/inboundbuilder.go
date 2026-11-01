@@ -217,9 +217,20 @@ func InboundBuilder(config *Config, nodeInfo *api.NodeInfo, tag string) (*core.I
 
 	// Build TLS and REALITY settings.
 	// allowInsecure is rejected by xray-core v26; this builder never sets it.
-	// REALITY clients must offer X25519MLKEM768 (fingerprint chrome / firefox /
-	// safari / ios / android / edge / 360 / qq). There is nothing to set
-	// server-side for that; mldsa65Seed stays optional.
+	//
+	// xray-core v26.10.31 reality (83f6217, from XTLS/REALITY 8cdf7bf) rejects
+	// a ClientHello that does not offer X25519MLKEM768 and forwards it to the
+	// decoy. With REALITYAllowNonPQClients false, only fingerprints that send
+	// that hybrid group authenticate: chrome, firefox, and safari on Xray-core.
+	// ios, edge, and qq do not. mihomo's default hello and sing-box strip the
+	// hybrid group, so they do not connect either. android and 360 have no
+	// TLS 1.3 key share and fail in both modes.
+	//
+	// REALITYAllowNonPQClients defaults to true and is applied process-wide
+	// (xray-core's REALITY protobuf has no field for it). X25519-only hellos
+	// then authenticate with that share, so chrome, firefox, safari, ios,
+	// edge, and qq connect. A client that still sends X25519MLKEM768 keeps
+	// that group for the TLS handshake. mldsa65Seed stays optional.
 	var isREALITY bool
 	if config.DisableLocalREALITYConfig {
 		if nodeInfo.REALITYConfig != nil && nodeInfo.EnableREALITY {

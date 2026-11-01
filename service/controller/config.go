@@ -25,6 +25,23 @@ type Config struct {
 	DisableLocalREALITYConfig bool                             `mapstructure:"DisableLocalREALITYConfig"`
 	EnableREALITY             bool                             `mapstructure:"EnableREALITY"`
 	REALITYConfigs            *REALITYConfig                   `mapstructure:"REALITYConfigs"`
+	// REALITYAllowNonPQClients accepts REALITY ClientHellos that offer
+	// only X25519. Nil means true, including when the key is omitted.
+	// Clients that offer X25519MLKEM768 still negotiate that hybrid group.
+	// The value is process-wide: xray-core's REALITY protobuf cannot carry
+	// it per inbound. Hot reload writes it before the new listeners start.
+	// When nodes in one process disagree, the first node wins and a warning
+	// is logged.
+	REALITYAllowNonPQClients *bool `mapstructure:"REALITYAllowNonPQClients"`
+}
+
+// AllowsNonPQClients reports whether this node accepts X25519-only REALITY
+// ClientHellos. A nil config or a nil field is the default, true.
+func (c *Config) AllowsNonPQClients() bool {
+	if c == nil || c.REALITYAllowNonPQClients == nil {
+		return true
+	}
+	return *c.REALITYAllowNonPQClients
 }
 
 type AutoSpeedLimitConfig struct {

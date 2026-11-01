@@ -657,17 +657,27 @@ func realityDestFromPanel(dest, serverPort string) (string, error) {
 	if dest == "" {
 		return "", fmt.Errorf("REALITY dest is empty: server_name and dest are both blank")
 	}
-	host, existingPort, err := stdnet.SplitHostPort(dest)
-	if err == nil && existingPort != "" {
-		return dest, nil
-	}
-	if err == nil {
+	if host, existingPort, err := stdnet.SplitHostPort(dest); err == nil {
+		if existingPort != "" {
+			// dest already has a port. Do not append server_port again:
+			// "www.example.com:443" + ":8443" is not a valid REALITY target.
+			return dest, nil
+		}
 		if host == "" {
 			return "", fmt.Errorf("REALITY dest %q is invalid", dest)
 		}
 		return stdnet.JoinHostPort(host, port), nil
 	}
-	return stdnet.JoinHostPort(dest, port), nil
+	// SplitHostPort failed. A bare IPv6 address ("2001:db8::1") and a
+	// bracketed one with no port ("[2001:db8::1]") both land here.
+	// JoinHostPort wraps a host that contains ':' in brackets, so a value
+	// that is already bracketed must be unwrapped first or the target
+	// becomes "[[2001:db8::1]]:443".
+	host := dest
+	if len(host) >= 2 && host[0] == '[' && host[len(host)-1] == ']' && strings.Contains(host, ":") {
+		host = host[1 : len(host)-1]
+	}
+	return stdnet.JoinHostPort(host, port), nil
 }
 
 // panelBodyStatus fails the call when the JSON body carries a status that

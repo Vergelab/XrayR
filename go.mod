@@ -23,6 +23,7 @@ require (
 	github.com/spf13/cobra v1.9.1
 	github.com/spf13/viper v1.18.2
 	github.com/stretchr/testify v1.12.1
+	github.com/xtls/reality v0.0.0-20261014101318-83f621788ca8
 	github.com/xtls/xray-core v1.260327.1-0.20261031132019-a4a3dff5b20c
 	golang.org/x/crypto v0.58.0
 	golang.org/x/net v0.62.0
@@ -247,7 +248,6 @@ require (
 	github.com/volcengine/volc-sdk-golang v1.0.241 // indirect
 	github.com/vultr/govultr/v3 v3.30.0 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
-	github.com/xtls/reality v0.0.0-20261014101318-83f621788ca8 // indirect
 	github.com/yandex-cloud/go-genproto v0.71.0 // indirect
 	github.com/yandex-cloud/go-sdk/services/dns v0.0.52 // indirect
 	github.com/yandex-cloud/go-sdk/v2 v2.88.0 // indirect
@@ -287,3 +287,7 @@ require (
 	layeh.com/gopher-luar v1.0.11 // indirect
 	lukechampine.com/blake3 v1.4.1 // indirect
 )
+
+// Patched xtls/reality (commit 83f621788ca8, the module xray-core v26.10.31
+// vendors). See third_party/reality/README.vergelab.md.
+replace github.com/xtls/reality => ./third_party/reality

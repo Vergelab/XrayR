@@ -41,10 +41,10 @@ jobs:
           if [ "${{ github.event_name }}" = "release" ]; then
             ver="${GITHUB_REF_NAME#v}"
           else
-            ver=0.2
+            ver=0.3
           fi
           if [ -z "$ver" ]; then
-            ver=0.2
+            ver=0.3
           fi
           echo "version=$ver" >> "$GITHUB_OUTPUT"
       - name: Build and push by digest
