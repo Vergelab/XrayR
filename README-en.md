@@ -1,107 +1,93 @@
 # XrayR
 
-[![](https://img.shields.io/badge/TgChat-@XrayR讨论-blue.svg)](https://t.me/XrayR_project)
-[![](https://img.shields.io/badge/Channel-@XrayR通知-blue.svg)](https://t.me/XrayR_channel)
-![](https://img.shields.io/github/stars/wyx2685/XrayR)
-![](https://img.shields.io/github/forks/wyx2685/XrayR)
-![](https://github.com/wyx2685/XrayR/actions/workflows/release.yml/badge.svg)
-![](https://github.com/wyx2685/XrayR/actions/workflows/docker.yml/badge.svg)
-[![Github All Releases](https://img.shields.io/github/downloads/wyx2685/XrayR/total.svg)]()
+Xray backend maintained by Vergelab. One process can serve several panels and nodes. The command and binary name stay `XrayR`, so existing install paths, systemd units, and scripts keep working.
 
-[Iranian(farsi) README](https://github.com/wyx2685/XrayR/blob/master/README_Fa.md), [Vietnamese(vi) README](https://github.com/wyx2685/XrayR/blob/master/README-vi.md), [English(en) README](https://github.com/wyx2685/XrayR/blob/master/README-en.md)
+Current version: **0.1**
 
-A Xray backend framework that can easily support many panels.
+- Source: https://github.com/Vergelab/XrayR
+- Install scripts and releases: https://github.com/Vergelab/xrayr-release
+- Container image: `ghcr.io/vergelab/xrayr`
+- 中文: [README.md](README.md)
 
-A back -end framework based on XRAY supports V2ay, Trojan, Shadowsocks protocols, which are easy to expand and support multi -panel docker.
-
-
-If you like this project, you can click STAR+WATCH in the upper right corner to continue to pay attention to the progress of this project.
-
-## Guide for use
-
-Tutorial：[Detailed tutorial](https://xrayr-project.github.io/XrayR-doc/)
-
-
-## Disclaimer
-
-This project is just my personal learning and development and maintenance. I do not guarantee any availability and is not responsible for any consequences caused by the use of this software.
+`XrayR version` prints `XrayR 0.1 (Vergelab)`.
 
 ## Features
 
-* Permanent open source and free.
-* Support V2Ray, Trojan, Shadowsocks multiple protocols.
-* Support new features such as Vless and XTLS.
-* Support single instance docking multi -panel and multi -node, no need to start repeatedly.
-* Support restriction online IP
-* Support node port level and user level speed limit.
-* The configuration is simple and clear.
-* Modify the automatic restart instance.
-* Easy to compile and upgrade, you can quickly update the core version and support the new features of XRAY-CORE.
+- VMess, VLESS, Trojan, and Shadowsocks.
+- One process can attach to multiple panels and nodes.
+- Online IP limits, plus per-node and per-user speed limits.
+- Reloads when the config file changes.
+- Can issue and renew TLS certificates.
 
-## Function
+## Capabilities
 
-| Function        | v2ray | trojan | shadowsocks |
-|-----------|-------|--------|-------------|
-| Get node information    | √     | √      | √           |
-| Get user information    | √     | √      | √           |
-| User traffic statistics    | √     | √      | √           |
-| Server information report   | √     | √      | √           |
-| Automatically apply for a TLS certificate | √     | √      | √           |
-| Automatic renewal TLS certificate | √     | √      | √           |
-| Number of online people    | √     | √      | √           |
-| Online user restrictions    | √     | √      | √           |
-| Audit rules      | √     | √      | √           |
-| Node port speed limit    | √     | √      | √           |
-| According to user speed limit    | √     | √      | √           |
-| Custom DNS    | √     | √      | √           |
+| Capability | VMess | VLESS | Trojan | Shadowsocks |
+| --- | --- | --- | --- | --- |
+| Node info | √ | √ | √ | √ |
+| User info | √ | √ | √ | √ |
+| User traffic | √ | √ | √ | √ |
+| Server status report | √ | √ | √ | √ |
+| Issue TLS certificate | √ | √ | √ | √ |
+| Renew TLS certificate | √ | √ | √ | √ |
+| Online user count | √ | √ | √ | √ |
+| Online user limit | √ | √ | √ | √ |
+| Audit rules | √ | √ | √ | √ |
+| Node port speed limit | √ | √ | √ | √ |
+| Per-user speed limit | √ | √ | √ | √ |
+| Custom DNS | √ | √ | √ | √ |
 
-## Support for panels
+## Panels
 
-| Panel                                                     | v2ray | trojan | shadowsocks             |
-|--------------------------------------------------------|-------|--------|-------------------------|
-| sspanel-uim                                            | √     | √      | √ (Single-ended multi-user and V2Ray-Plugin) |
-| v2board                                                | √     | √      | √                       |
-| [PMPanel](https://github.com/ByteInternetHK/PMPanel)   | √     | √      | √                       |
-| [ProxyPanel](https://github.com/ProxyPanel/ProxyPanel) | √     | √      | √                       |
-| [WHMCS (V2RaySocks)](https://v2raysocks.doxtex.com/)   | √     | √      | √                       |
-| [BunPanel](https://github.com/pennyMorant/bunpanel-release)   | √     | √      | √                       |
+Set `PanelType` to the name in this table.
 
-## Software Installation
+| Panel | VMess | VLESS | Trojan | Shadowsocks |
+| --- | --- | --- | --- | --- |
+| SSpanel (sspanel-uim) | √ | √ | √ | √ (single-port multi-user and V2Ray-Plugin) |
+| NewV2board | √ | √ | √ | √ |
+| [PMPanel](https://github.com/ByteInternetHK/PMPanel) | √ | √ | √ | √ |
+| [ProxyPanel](https://github.com/ProxyPanel/ProxyPanel) | √ | √ | √ | √ |
+| [WHMCS (V2RaySocks)](https://v2raysocks.doxtex.com/) | √ | √ | √ | √ |
+| [GoV2Panel](https://github.com/pingProMax/gov2panel) | √ | √ | √ | √ |
+| [BunPanel](https://github.com/pennyMorant/bunpanel-release) | √ | √ | √ | √ |
 
-### 1-Click installation
+## Install
 
+### One-step install
+
+```bash
+wget -N https://raw.githubusercontent.com/Vergelab/xrayr-release/master/install.sh && bash install.sh
 ```
-wget -N https://raw.githubusercontent.com/wyx2685/XrayR-release/master/install.sh && bash install.sh
+
+### Manual install
+
+Download the archive for your platform from [Releases](https://github.com/Vergelab/xrayr-release/releases). The Linux amd64 archive is `XrayR-linux-64.zip`. It contains the `XrayR` binary, `config.yml`, `custom_inbound.json`, `custom_outbound.json`, `dns.json`, `route.json`, `rulelist`, `geoip.dat`, `geosite.dat`, `LICENSE`, and `README.md`.
+
+```bash
+unzip XrayR-linux-64.zip -d /usr/local/XrayR
+cd /usr/local/XrayR
+# edit config.yml, then start
+./XrayR
 ```
 
+### Docker
 
-### Manual installation
+The image `ghcr.io/vergelab/xrayr` is published when a release is published. Mount the config at `/etc/XrayR/config.yml`:
 
-[Manual installation tutorial](https://xrayr-project.github.io/XrayR-doc/xrayr-xia-zai-he-an-zhuang/install/manual)
+```bash
+docker pull ghcr.io/vergelab/xrayr
+docker run -d --name xrayr --network host \
+  -v /etc/XrayR:/etc/XrayR \
+  ghcr.io/vergelab/xrayr
+```
 
-## Configuration file and detailed use tutorial
+## Configuration
 
-[Detailed tutorial](https://xrayr-project.github.io/XrayR-doc/)
+The sample config is [`release/config/config.yml.example`](release/config/config.yml.example). DNS, routing, inbound, and outbound fields follow the Xray core config format. Comments in the sample point at those fields.
 
-## Thanks
+## Disclaimer
 
-* [Project X](https://github.com/XTLS/)
-* [V2Fly](https://github.com/v2fly)
-* [VNet-V2ray](https://github.com/ProxyPanel/VNet-V2ray)
-* [Air-Universe](https://github.com/crossfw/Air-Universe)
+This program is for study and research. The maintainer does not guarantee availability and is not responsible for consequences of using this software.
 
-## Licence
+## License
 
-[Mozilla Public License Version 2.0](https://github.com/wyx2685/XrayR/blob/master/LICENSE)
-
-## Telgram
-
-[Xrayr back-end discussion](https://t.me/XrayR_project)
-
-[Xrayr notification](https://t.me/XrayR_channel)
-
-## Stargazers over time
-
-[![Stargazers over time](https://starchart.cc/wyx2685/XrayR.svg)](https://starchart.cc/wyx2685/XrayR)
-
-
+This project is licensed under the Mozilla Public License 2.0 (see [LICENSE](LICENSE)) and is derived from XrayR.
