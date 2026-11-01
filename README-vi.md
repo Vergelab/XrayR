@@ -2,7 +2,7 @@
 
 Backend Xray do Vergelab duy trì. Lệnh và tên tệp nhị phân vẫn là `XrayR`.
 
-Phiên bản hiện tại: **0.1**
+Phiên bản hiện tại: **0.2**
 
 - Mã nguồn: https://github.com/Vergelab/XrayR
 - Tập lệnh cài đặt và bản phát hành: https://github.com/Vergelab/xrayr-release

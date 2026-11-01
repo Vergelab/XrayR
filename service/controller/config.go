@@ -17,7 +17,7 @@ type Config struct {
 	DisableGetRule            bool                             `mapstructure:"DisableGetRule"`
 	EnableProxyProtocol       bool                             `mapstructure:"EnableProxyProtocol"`
 	EnableFallback            bool                             `mapstructure:"EnableFallback"`
-	DisableIVCheck            bool                             `mapstructure:"DisableIVCheck"`
+	DisableIVCheck            bool                             `mapstructure:"DisableIVCheck"` // Ignored. xray-core v26 removed Shadowsocks IV replay checks.
 	DisableSniffing           bool                             `mapstructure:"DisableSniffing"`
 	AutoSpeedLimitConfig      *AutoSpeedLimitConfig            `mapstructure:"AutoSpeedLimitConfig"`
 	GlobalDeviceLimitConfig   *limiter.GlobalDeviceLimitConfig `mapstructure:"GlobalDeviceLimitConfig"`
@@ -52,4 +52,5 @@ type REALITYConfig struct {
 	MaxClientVer     string   `mapstructure:"MaxClientVer"`
 	MaxTimeDiff      uint64   `mapstructure:"MaxTimeDiff"`
 	ShortIds         []string `mapstructure:"ShortIds"`
+	Mldsa65Seed      string   `mapstructure:"Mldsa65Seed"` // Optional. Clients still use X25519MLKEM768.
 }
