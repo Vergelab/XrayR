@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -87,25 +86,23 @@ func readLocalRuleList(path string) (LocalRuleList []api.DetectRule) {
 	if path != "" {
 		// open the file
 		file, err := os.Open(path)
-		defer file.Close()
-		// handle errors while opening
 		if err != nil {
 			log.Printf("Error when opening file: %s", err)
 			return LocalRuleList
 		}
+		defer file.Close()
 
 		fileScanner := bufio.NewScanner(file)
 
 		// read line by line
 		for fileScanner.Scan() {
-			LocalRuleList = append(LocalRuleList, api.DetectRule{
-				ID:      -1,
-				Pattern: regexp.MustCompile(fileScanner.Text()),
-			})
+			if rule, ok := api.CompileRule(-1, fileScanner.Text()); ok {
+				LocalRuleList = append(LocalRuleList, rule)
+			}
 		}
 		// handle first encountered error while reading
 		if err := fileScanner.Err(); err != nil {
-			log.Fatalf("Error while reading file: %s", err)
+			log.Printf("Error while reading file: %s", err)
 			return
 		}
 	}
@@ -128,6 +125,9 @@ func (c *APIClient) assembleURL(path string) string {
 }
 
 func (c *APIClient) parseResponse(res *resty.Response, path string, err error) (*simplejson.Json, error) {
+	if nerr := api.NilResponse(res, err); nerr != nil {
+		return nil, fmt.Errorf("request %s failed: %s", c.assembleURL(path), nerr)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("request %s failed: %v", c.assembleURL(path), err)
 	}
@@ -155,6 +155,9 @@ func (c *APIClient) GetNodeInfo() (nodeInfo *api.NodeInfo, err error) {
 		Get(path)
 
 	// Etag identifier for a specific version of a resource. StatusCode = 304 means no changed
+	if nerr := api.NilResponse(res, err); nerr != nil {
+		return nil, nerr
+	}
 	if res.StatusCode() == 304 {
 		return nil, errors.New(api.NodeNotModified)
 	}
@@ -212,6 +215,9 @@ func (c *APIClient) GetUserList() (UserList *[]api.UserInfo, err error) {
 		Get(path)
 
 	// Etag identifier for a specific version of a resource. StatusCode = 304 means no changed
+	if nerr := api.NilResponse(res, err); nerr != nil {
+		return nil, nerr
+	}
 	if res.StatusCode() == 304 {
 		return nil, errors.New(api.UserNotModified)
 	}
@@ -277,10 +283,9 @@ func (c *APIClient) GetNodeRule() (*[]api.DetectRule, error) {
 	for i := range routes {
 		if routes[i].Action == "block" {
 
-			ruleList = append(ruleList, api.DetectRule{
-				ID:      i,
-				Pattern: regexp.MustCompile(strings.Join(routes[i].Match, "|")),
-			})
+			if rule, ok := api.CompileRule(i, strings.Join(routes[i].Match, "|")); ok {
+				ruleList = append(ruleList, rule)
+			}
 		}
 	}
 

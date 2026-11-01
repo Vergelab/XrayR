@@ -1,10 +1,18 @@
 package mylego_test
 
 import (
+	"os"
 	"testing"
 
 	"github.com/Vergelab/XrayR/common/mylego"
 )
+
+func skipWithoutLiveACME(t *testing.T) {
+	t.Helper()
+	if os.Getenv("XRAYR_LIVE_ACME") == "" {
+		t.Skip("skipping: set XRAYR_LIVE_ACME=1 to run a live ACME client")
+	}
+}
 
 func TestLegoClient(t *testing.T) {
 	_, err := mylego.New(&mylego.CertConfig{})
@@ -14,6 +22,7 @@ func TestLegoClient(t *testing.T) {
 }
 
 func TestLegoDNSCert(t *testing.T) {
+	skipWithoutLiveACME(t)
 	lego, err := mylego.New(&mylego.CertConfig{
 		CertDomain: "node1.test.com",
 		Provider:   "alidns",
@@ -37,6 +46,7 @@ func TestLegoDNSCert(t *testing.T) {
 }
 
 func TestLegoHTTPCert(t *testing.T) {
+	skipWithoutLiveACME(t)
 	lego, err := mylego.New(&mylego.CertConfig{
 		CertMode:   "http",
 		CertDomain: "node1.test.com",
@@ -55,6 +65,7 @@ func TestLegoHTTPCert(t *testing.T) {
 }
 
 func TestLegoRenewCert(t *testing.T) {
+	skipWithoutLiveACME(t)
 	lego, err := mylego.New(&mylego.CertConfig{
 		CertDomain: "node1.test.com",
 		Email:      "test@gmail.com",

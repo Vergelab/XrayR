@@ -7,6 +7,7 @@ import (
 	"path"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -73,34 +74,64 @@ func run() error {
 	config := getConfig()
 	panelConfig := &panel.Config{}
 	if err := config.Unmarshal(panelConfig); err != nil {
-		return fmt.Errorf("Parse config file %v failed: %s \n", cfgFile, err)
+		return fmt.Errorf("parse config file %v failed: %s", cfgFile, err)
 	}
 
-	if panelConfig.LogConfig.Level == "debug" {
+	if panelConfig.LogConfig != nil && panelConfig.LogConfig.Level == "debug" {
 		log.SetReportCaller(true)
+	}
+	if err := panelConfig.Validate(); err != nil {
+		return fmt.Errorf("invalid config file %v: %s", cfgFile, err)
 	}
 
 	p := panel.New(panelConfig)
 	lastTime := time.Now()
+	var reloadMu sync.Mutex
 	config.OnConfigChange(func(e fsnotify.Event) {
 		// Discarding event received within a short period of time after receiving an event.
-		if time.Now().After(lastTime.Add(3 * time.Second)) {
-			// Hot reload function
-			fmt.Println("Config file changed:", e.Name)
+		if !time.Now().After(lastTime.Add(3 * time.Second)) {
+			return
+		}
+		reloadMu.Lock()
+		defer reloadMu.Unlock()
+		next := &panel.Config{}
+		if err := config.Unmarshal(next); err != nil {
+			log.Errorf("hot reload ignored, config parse failed: %s", err)
+			return
+		}
+		if err := next.Validate(); err != nil {
+			log.Errorf("hot reload ignored, config invalid: %s", err)
+			return
+		}
+		log.Printf("Config file changed: %s", e.Name)
+		previous := panelConfig
+		func() {
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					log.Errorf("hot reload failed (%v); restoring the previous config", recovered)
+					panelConfig = previous
+					restored := panel.New(previous)
+					func() {
+						defer func() {
+							if again := recover(); again != nil {
+								log.Errorf("restore after hot reload failed: %v", again)
+							}
+						}()
+						restored.Start()
+						p = restored
+					}()
+				}
+			}()
 			p.Close()
-			// Delete old instance and trigger GC
 			runtime.GC()
-			if err := config.Unmarshal(panelConfig); err != nil {
-				log.Panicf("Parse config file %v failed: %s \n", cfgFile, err)
-			}
-
-			if panelConfig.LogConfig.Level == "debug" {
+			panelConfig = next
+			if panelConfig.LogConfig != nil && panelConfig.LogConfig.Level == "debug" {
 				log.SetReportCaller(true)
 			}
-
+			p = panel.New(panelConfig)
 			p.Start()
 			lastTime = time.Now()
-		}
+		}()
 	})
 
 	p.Start()
@@ -108,9 +139,9 @@ func run() error {
 
 	// Explicitly triggering GC to remove garbage from config loading.
 	runtime.GC()
-	// Running backend
+	// Running backend. SIGKILL cannot be caught, so it is not registered.
 	osSignals := make(chan os.Signal, 1)
-	signal.Notify(osSignals, os.Interrupt, os.Kill, syscall.SIGTERM)
+	signal.Notify(osSignals, os.Interrupt, syscall.SIGTERM)
 	<-osSignals
 
 	return nil

@@ -1,9 +1,33 @@
 package panel
 
 import (
+	"fmt"
+
 	"github.com/Vergelab/XrayR/api"
 	"github.com/Vergelab/XrayR/service/controller"
 )
+
+// Validate checks a freshly parsed config before it replaces a running panel.
+func (c *Config) Validate() error {
+	if c == nil {
+		return fmt.Errorf("config is nil")
+	}
+	if len(c.NodesConfig) == 0 {
+		return fmt.Errorf("no nodes configured")
+	}
+	for i, node := range c.NodesConfig {
+		if node == nil {
+			return fmt.Errorf("node %d is nil", i)
+		}
+		if node.PanelType == "" {
+			return fmt.Errorf("node %d is missing PanelType", i)
+		}
+		if node.ApiConfig == nil {
+			return fmt.Errorf("node %d is missing ApiConfig", i)
+		}
+	}
+	return nil
+}
 
 type Config struct {
 	LogConfig          *LogConfig        `mapstructure:"Log"`

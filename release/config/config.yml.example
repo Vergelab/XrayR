@@ -21,6 +21,7 @@ Nodes:
       NodeType: V2ray # Node type: V2ray, Vmess, Vless, Shadowsocks, Trojan, Shadowsocks-Plugin
       Timeout: 30 # Timeout for the api request
       EnableVless: true # Enable Vless for V2ray Type
+      VlessFlow: "xtls-rprx-vision" # Used when the panel flow is empty. Xboard tls=2 + Vision.
       SpeedLimit: 0 # Mbps, Local settings will replace remote settings, 0 means disable
       DeviceLimit: 0 # Local settings will replace remote settings, 0 means disable
       RuleListPath: # /etc/XrayR/rulelist Path to local rulelist file
@@ -54,14 +55,14 @@ Nodes:
           Path: # HTTP PATH, Empty for any
           Dest: 80 # Required, Destination of fallback, check https://xtls.github.io/config/features/fallback.html for details.
           ProxyProtocolVer: 0 # Send PROXY protocol version, 0 for disable
-      EnableREALITY: false # 是否开启 REALITY
-      DisableLocalREALITYConfig: false  # 是否忽略本地 REALITY 配置
-      REALITYConfigs: # 本地 REALITY 配置
+      EnableREALITY: false # 本地 REALITY 开关。DisableLocalREALITYConfig 为 true 时，密钥和 dest 以面板为准。
+      DisableLocalREALITYConfig: true # 从面板拉取 REALITY（Xboard tls=2）。面板声明了 REALITY 但这里没生效时，节点会拒绝启动，不会退回 TLS 或明文。
+      REALITYConfigs: # 必须保留这一段（可以为空字段）。Show 从这里读；dest / 私钥 / shortId 来自面板。
         Show: false # Show REALITY debug
-        Dest: m.media-amazon.com:443 # REALITY 目标地址
+        Dest: www.microsoft.com:443 # DisableLocalREALITYConfig 为 true 时不使用，仅保证配置块存在
         ProxyProtocolVer: 0 # Send PROXY protocol version, 0 for disable
         ServerNames: # Required, list of available serverNames for the client, * wildcard is not supported at the moment.
-          - m.media-amazon.com
+          - www.microsoft.com
         PrivateKey: # 可不填
         MinClientVer: # Optional, minimum version of Xray client, format is x.y.z.
         MaxClientVer: # Optional, maximum version of Xray client, format is x.y.z.

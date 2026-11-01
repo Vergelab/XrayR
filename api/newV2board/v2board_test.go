@@ -1,11 +1,19 @@
 package newV2board_test
 
 import (
+	"os"
 	"testing"
 
 	"github.com/Vergelab/XrayR/api"
 	"github.com/Vergelab/XrayR/api/newV2board"
 )
+
+func skipWithoutLivePanel(t *testing.T) {
+	t.Helper()
+	if os.Getenv("XRAYR_LIVE_PANEL") == "" {
+		t.Skip("skipping: set XRAYR_LIVE_PANEL=1 to run against a live panel")
+	}
+}
 
 func CreateClient() api.API {
 	apiConfig := &api.Config{
@@ -19,6 +27,7 @@ func CreateClient() api.API {
 }
 
 func TestGetV2rayNodeInfo(t *testing.T) {
+	skipWithoutLivePanel(t)
 	client := CreateClient()
 	nodeInfo, err := client.GetNodeInfo()
 	if err != nil {
@@ -28,6 +37,7 @@ func TestGetV2rayNodeInfo(t *testing.T) {
 }
 
 func TestGetSSNodeInfo(t *testing.T) {
+	skipWithoutLivePanel(t)
 	apiConfig := &api.Config{
 		APIHost:  "http://127.0.0.1:668",
 		Key:      "qwertyuiopasdfghjkl",
@@ -43,6 +53,7 @@ func TestGetSSNodeInfo(t *testing.T) {
 }
 
 func TestGetTrojanNodeInfo(t *testing.T) {
+	skipWithoutLivePanel(t)
 	apiConfig := &api.Config{
 		APIHost:  "http://127.0.0.1:668",
 		Key:      "qwertyuiopasdfghjkl",
@@ -58,6 +69,7 @@ func TestGetTrojanNodeInfo(t *testing.T) {
 }
 
 func TestGetUserList(t *testing.T) {
+	skipWithoutLivePanel(t)
 	client := CreateClient()
 
 	userList, err := client.GetUserList()
@@ -69,6 +81,7 @@ func TestGetUserList(t *testing.T) {
 }
 
 func TestReportReportUserTraffic(t *testing.T) {
+	skipWithoutLivePanel(t)
 	client := CreateClient()
 	userList, err := client.GetUserList()
 	if err != nil {
@@ -90,6 +103,7 @@ func TestReportReportUserTraffic(t *testing.T) {
 }
 
 func TestGetNodeRule(t *testing.T) {
+	skipWithoutLivePanel(t)
 	client := CreateClient()
 	client.Debug()
 	ruleList, err := client.GetNodeRule()

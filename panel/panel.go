@@ -230,7 +230,6 @@ func (p *Panel) Start() {
 		}
 	}
 	p.Running = true
-	return
 }
 
 // Close the panel
@@ -246,7 +245,6 @@ func (p *Panel) Close() {
 	p.Service = nil
 	p.Server.Close()
 	p.Running = false
-	return
 }
 
 func parseConnectionConfig(c *ConnectionConfig) (policy *conf.Policy) {

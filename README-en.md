@@ -26,11 +26,11 @@ Current version: **0.2**
 | Node info | √ | √ | √ | √ |
 | User info | √ | √ | √ | √ |
 | User traffic | √ | √ | √ | √ |
-| Server status report | √ | √ | √ | √ |
+| Server status report | √ | √ | √ | √ (NewV2board does not upload it; the call returns success) |
 | Issue TLS certificate | √ | √ | √ | √ |
 | Renew TLS certificate | √ | √ | √ | √ |
 | Online user count | √ | √ | √ | √ |
-| Online user limit | √ | √ | √ | √ |
+| Online user limit | √ | √ | √ | √ (see device-limit note below) |
 | Audit rules | √ | √ | √ | √ |
 | Node port speed limit | √ | √ | √ | √ |
 | Per-user speed limit | √ | √ | √ | √ |
@@ -83,6 +83,18 @@ docker run -d --name xrayr --network host \
 ## Configuration
 
 The sample config is [`release/config/config.yml.example`](release/config/config.yml.example). DNS, routing, inbound, and outbound fields follow the Xray core config format. Comments in the sample point at those fields.
+
+## Routing
+
+The shipped `route.json` sends all TCP/UDP to `direct`. `custom_outbound.json` is a freedom direct exit and has no WARP key. The previous samples, which included a sample WARP key, are [`route.json.example`](release/config/route.json.example) and [`custom_outbound.json.example`](release/config/custom_outbound.json.example). Do not run those as production config.
+
+## NewV2board / Xboard
+
+- Server status is not reported. `ReportNodeStatus` returns success. Xboard 0.1.1 has no matching write.
+- Device limit counts distinct local source IPs for that user on this node, and also the panel alive count when the panel provides one. Xboard 0.1.1-dev users have no `device_limit` field and no `alivelist` (HTTP 404, logged once). Set `DeviceLimit` in the node config to enforce it. If the user payload includes `device_limit` and the local `DeviceLimit` is 0, the payload value is used. A failed alivelist poll keeps the last good map.
+- Each `RuleListPath` line is an unanchored regular expression (`.` matches any character) and is a block rule. A line that does not compile is skipped and logged.
+- An empty panel `flow` uses local `ApiConfig.VlessFlow`. The NewV2board example sets `xtls-rprx-vision` and `DisableLocalREALITYConfig: true`. If the panel says REALITY and it was not applied, the node build fails instead of falling back to TLS or plaintext.
+- The API token stays a query parameter. Xboard 0.1.1-dev validates `token` with Laravel `$request->validate`, which reads the query string and body, not a header.
 
 ## Disclaimer
 

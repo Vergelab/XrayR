@@ -4,11 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"runtime/debug"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/xtls/xray-core/common/protocol"
-	"github.com/xtls/xray-core/common/task"
 	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/features/inbound"
 	"github.com/xtls/xray-core/features/outbound"
@@ -30,28 +32,25 @@ type LimitInfo struct {
 }
 
 type Controller struct {
-	server       *core.Instance
-	config       *Config
-	clientInfo   api.ClientInfo
-	apiClient    api.API
-	nodeInfo     *api.NodeInfo
-	Tag          string
-	userList     *[]api.UserInfo
-	tasks        []periodicTask
-	limitedUsers map[api.UserInfo]LimitInfo
-	warnedUsers  map[api.UserInfo]int
-	panelType    string
-	ibm          inbound.Manager
-	obm          outbound.Manager
-	stm          stats.Manager
-	dispatcher   *mydispatcher.DefaultDispatcher
-	startAt      time.Time
-	logger       *log.Entry
-}
-
-type periodicTask struct {
-	tag string
-	*task.Periodic
+	mu              sync.RWMutex
+	server          *core.Instance
+	config          *Config
+	clientInfo      api.ClientInfo
+	apiClient       api.API
+	nodeInfo        *api.NodeInfo
+	Tag             string
+	userList        *[]api.UserInfo
+	tasks           []periodicTask
+	limitedUsers    map[api.UserInfo]LimitInfo
+	warnedUsers     map[api.UserInfo]int
+	panelType       string
+	ibm             inbound.Manager
+	obm             outbound.Manager
+	stm             stats.Manager
+	dispatcher      *mydispatcher.DefaultDispatcher
+	startAt         time.Time
+	logger          *log.Entry
+	trafficInterval atomic.Int64
 }
 
 // New return a Controller service with default parameters.
@@ -88,8 +87,14 @@ func (c *Controller) Start() error {
 	if newNodeInfo.Port == 0 {
 		return errors.New("server port must > 0")
 	}
+	c.notePushInterval()
+	if newNodeInfo.EnableVless || newNodeInfo.NodeType == "Vless" {
+		c.logger.Infof("effective VLESS flow: %s", newNodeInfo.VlessFlow)
+	}
+	c.mu.Lock()
 	c.nodeInfo = newNodeInfo
-	c.Tag = c.buildNodeTag()
+	c.Tag = fmt.Sprintf("%s_%s_%d", newNodeInfo.NodeType, c.config.ListenIP, newNodeInfo.Port)
+	c.mu.Unlock()
 
 	// Add new tag
 	err = c.addNewTag(newNodeInfo)
@@ -104,7 +109,9 @@ func (c *Controller) Start() error {
 	}
 
 	// sync controller userList
+	c.mu.Lock()
 	c.userList = userInfo
+	c.mu.Unlock()
 
 	err = c.addNewUser(userInfo, newNodeInfo)
 	if err != nil {
@@ -115,14 +122,7 @@ func (c *Controller) Start() error {
 	if err := c.AddInboundLimiter(c.Tag, newNodeInfo.SpeedLimit, userInfo, c.config.GlobalDeviceLimitConfig); err != nil {
 		c.logger.Print(err)
 	}
-
-	// Update alive user list
-	if v2b, ok := c.apiClient.(*newV2board.APIClient); ok {
-		if v, ok := c.dispatcher.Limiter.InboundInfo.Load(c.Tag); ok {
-			inboundinfo := v.(*limiter.InboundInfo)
-			inboundinfo.AliveList = v2b.AliveMap.Alive
-		}
-	}
+	c.syncAlive()
 
 	// Add Rule Manager
 	if !c.config.DisableGetRule {
@@ -144,30 +144,32 @@ func (c *Controller) Start() error {
 		c.warnedUsers = make(map[api.UserInfo]int)
 	}
 
-	// Add periodic tasks
+	// Add periodic tasks. push_interval, when the panel sends it, replaces
+	// UpdatePeriodic for the traffic task only.
 	c.tasks = append(c.tasks,
 		periodicTask{
-			tag: "node monitor",
-			Periodic: &task.Periodic{
-				Interval: time.Duration(c.config.UpdatePeriodic) * time.Second,
-				Execute:  c.nodeInfoMonitor,
-			}},
+			tag:      "node monitor",
+			interval: c.nodeInterval,
+			execute:  c.guard("node monitor", c.nodeInfoMonitor),
+			stop:     make(chan struct{}),
+		},
 		periodicTask{
-			tag: "user monitor",
-			Periodic: &task.Periodic{
-				Interval: time.Duration(c.config.UpdatePeriodic) * time.Second,
-				Execute:  c.userInfoMonitor,
-			}},
+			tag:      "user monitor",
+			interval: c.userInterval,
+			execute:  c.guard("user monitor", c.userInfoMonitor),
+			stop:     make(chan struct{}),
+		},
 	)
 
-	// Check cert service in need
-	if c.nodeInfo.EnableTLS && !c.config.EnableREALITY {
+	if c.needsCertMonitor() {
 		c.tasks = append(c.tasks, periodicTask{
 			tag: "cert monitor",
-			Periodic: &task.Periodic{
-				Interval: time.Duration(c.config.UpdatePeriodic) * time.Second * 60,
-				Execute:  c.certMonitor,
-			}})
+			interval: func() time.Duration {
+				return c.nodeInterval() * 60
+			},
+			execute: c.guard("cert monitor", c.certMonitor),
+			stop:    make(chan struct{}),
+		})
 	}
 
 	// Start periodic tasks
@@ -182,21 +184,91 @@ func (c *Controller) Start() error {
 // Close implement the Close() function of the service interface
 func (c *Controller) Close() error {
 	for i := range c.tasks {
-		if c.tasks[i].Periodic != nil {
-			if err := c.tasks[i].Periodic.Close(); err != nil {
-				c.logger.Panicf("%s periodic task close failed: %s", c.tasks[i].tag, err)
-			}
+		if err := c.tasks[i].Close(); err != nil {
+			c.logger.Printf("%s periodic task close failed: %s", c.tasks[i].tag, err)
 		}
 	}
-
 	return nil
+}
+
+func (c *Controller) guard(tag string, fn func() error) func() error {
+	return func() error {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				c.logger.Printf("%s periodic task recovered from panic: %v\n%s", tag, recovered, debug.Stack())
+			}
+		}()
+		return fn()
+	}
+}
+
+func (c *Controller) nodeInterval() time.Duration {
+	sec := c.config.UpdatePeriodic
+	if sec <= 0 {
+		sec = 60
+	}
+	return time.Duration(sec) * time.Second
+}
+
+func (c *Controller) userInterval() time.Duration {
+	if pi := c.trafficInterval.Load(); pi > 0 {
+		return time.Duration(pi) * time.Second
+	}
+	return c.nodeInterval()
+}
+
+func (c *Controller) notePushInterval() {
+	v2b, ok := c.apiClient.(*newV2board.APIClient)
+	if !ok {
+		return
+	}
+	if pi := v2b.PushInterval(); pi > 0 {
+		c.trafficInterval.Store(int64(pi))
+	}
+}
+
+func (c *Controller) syncAlive() {
+	v2b, ok := c.apiClient.(*newV2board.APIClient)
+	if !ok {
+		return
+	}
+	c.mu.RLock()
+	tag := c.Tag
+	c.mu.RUnlock()
+	if v, ok := c.dispatcher.Limiter.InboundInfo.Load(tag); ok {
+		v.(*limiter.InboundInfo).SetAliveList(v2b.AliveSnapshot())
+	}
+}
+
+func (c *Controller) needsCertMonitor() bool {
+	c.mu.RLock()
+	info := c.nodeInfo
+	c.mu.RUnlock()
+	if info == nil || !info.EnableTLS || info.EnableREALITY || c.config.EnableREALITY {
+		return false
+	}
+	if c.config.CertConfig == nil {
+		return false
+	}
+	switch c.config.CertConfig.CertMode {
+	case "dns", "http", "tls":
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *Controller) nodeInfoMonitor() (err error) {
 	// delay to start
-	if time.Since(c.startAt) < time.Duration(c.config.UpdatePeriodic)*time.Second {
+	if time.Since(c.startAt) < c.nodeInterval() {
 		return nil
 	}
+
+	c.mu.RLock()
+	currentNode := c.nodeInfo
+	currentTag := c.Tag
+	currentUsers := c.userList
+	c.mu.RUnlock()
 
 	// First fetch Node Info
 	var nodeInfoChanged = true
@@ -204,70 +276,62 @@ func (c *Controller) nodeInfoMonitor() (err error) {
 	if err != nil {
 		if err.Error() == api.NodeNotModified {
 			nodeInfoChanged = false
-			newNodeInfo = c.nodeInfo
+			newNodeInfo = currentNode
 		} else {
 			c.logger.Print(err)
 			return nil
 		}
 	}
-	if newNodeInfo.Port == 0 {
-		return errors.New("server port must > 0")
+	if newNodeInfo == nil || newNodeInfo.Port == 0 {
+		c.logger.Print("server port must > 0")
+		return nil
 	}
+	c.notePushInterval()
 
 	// Update User
 	var usersChanged = true
 	newUserInfo, err := c.apiClient.GetUserList()
-
-	// Update alive user list
-	if v2b, ok := c.apiClient.(*newV2board.APIClient); ok {
-		if v, ok := c.dispatcher.Limiter.InboundInfo.Load(c.Tag); ok {
-			inboundinfo := v.(*limiter.InboundInfo)
-			inboundinfo.AliveList = v2b.AliveMap.Alive
-		}
-	}
+	c.syncAlive()
 	if err != nil {
 		if err.Error() == api.UserNotModified {
 			usersChanged = false
-			newUserInfo = c.userList
+			newUserInfo = currentUsers
+		} else if err.Error() == "users is null" {
+			empty := make([]api.UserInfo, 0)
+			newUserInfo = &empty
 		} else {
 			c.logger.Print(err)
 			return nil
 		}
 	}
+	if newUserInfo == nil {
+		empty := make([]api.UserInfo, 0)
+		newUserInfo = &empty
+	}
 
-	// If nodeInfo changed
-	if nodeInfoChanged {
-		if !reflect.DeepEqual(c.nodeInfo, newNodeInfo) {
-			// Remove old tag
-			oldTag := c.Tag
-			err := c.removeOldTag(oldTag)
-			if err != nil {
-				c.logger.Print(err)
-				return nil
-			}
-			if c.nodeInfo.NodeType == "Shadowsocks-Plugin" {
-				err = c.removeOldTag(fmt.Sprintf("dokodemo-door_%s+1", c.Tag))
-			}
-			if err != nil {
-				c.logger.Print(err)
-				return nil
-			}
-			// Add new tag
-			c.nodeInfo = newNodeInfo
-			c.Tag = c.buildNodeTag()
-			err = c.addNewTag(newNodeInfo)
-			if err != nil {
-				c.logger.Print(err)
-				return nil
-			}
-			nodeInfoChanged = true
-			// Remove Old limiter
-			if err = c.DeleteInboundLimiter(oldTag); err != nil {
-				c.logger.Print(err)
-				return nil
+	// If nodeInfo changed, build the new inbound first. A failed build keeps
+	// the old inbound and does not record the new nodeInfo, so the next poll
+	// tries again. User changes still apply to the inbound that is serving.
+	applied := false
+	if nodeInfoChanged && !reflect.DeepEqual(currentNode, newNodeInfo) {
+		oldTag := currentTag
+		if err := c.replaceNode(currentNode, currentTag, newNodeInfo); err != nil {
+			c.logger.Print(err)
+			if v2b, ok := c.apiClient.(*newV2board.APIClient); ok {
+				v2b.InvalidateNodeETag()
 			}
 		} else {
-			nodeInfoChanged = false
+			if err = c.DeleteInboundLimiter(oldTag); err != nil {
+				c.logger.Print(err)
+			}
+			c.mu.RLock()
+			currentTag = c.Tag
+			currentNode = c.nodeInfo
+			c.mu.RUnlock()
+			applied = true
+			if newNodeInfo.EnableVless || newNodeInfo.NodeType == "Vless" {
+				c.logger.Infof("effective VLESS flow: %s", newNodeInfo.VlessFlow)
+			}
 		}
 	}
 
@@ -277,54 +341,53 @@ func (c *Controller) nodeInfoMonitor() (err error) {
 			if err.Error() != api.RuleNotModified {
 				c.logger.Printf("Get rule list filed: %s", err)
 			}
-		} else if len(*ruleList) > 0 {
-			if err := c.UpdateRule(c.Tag, *ruleList); err != nil {
+		} else if ruleList != nil && len(*ruleList) > 0 {
+			if err := c.UpdateRule(currentTag, *ruleList); err != nil {
 				c.logger.Print(err)
 			}
 		}
 	}
 
-	if nodeInfoChanged {
+	if applied {
 		err = c.addNewUser(newUserInfo, newNodeInfo)
 		if err != nil {
 			c.logger.Print(err)
 			return nil
 		}
-
-		// Add Limiter
-		if err := c.AddInboundLimiter(c.Tag, newNodeInfo.SpeedLimit, newUserInfo, c.config.GlobalDeviceLimitConfig); err != nil {
+		if err := c.AddInboundLimiter(currentTag, newNodeInfo.SpeedLimit, newUserInfo, c.config.GlobalDeviceLimitConfig); err != nil {
 			c.logger.Print(err)
 			return nil
 		}
-
+		c.syncAlive()
 	} else {
 		var deleted, added []api.UserInfo
 		if usersChanged {
-			deleted, added = compareUserList(c.userList, newUserInfo)
+			deleted, added = compareUserList(currentUsers, newUserInfo)
 			if len(deleted) > 0 {
 				deletedEmail := make([]string, len(deleted))
 				for i, u := range deleted {
-					deletedEmail[i] = fmt.Sprintf("%s|%s|%d", c.Tag, u.Email, u.UID)
+					deletedEmail[i] = fmt.Sprintf("%s|%s|%d", currentTag, u.Email, u.UID)
 				}
-				err := c.removeUsers(deletedEmail, c.Tag)
+				err := c.removeUsers(deletedEmail, currentTag)
 				if err != nil {
 					c.logger.Print(err)
 				}
 			}
 			if len(added) > 0 {
-				err = c.addNewUser(&added, c.nodeInfo)
+				err = c.addNewUser(&added, currentNode)
 				if err != nil {
 					c.logger.Print(err)
 				}
-				// Update Limiter
-				if err := c.UpdateInboundLimiter(c.Tag, &added); err != nil {
+				if err := c.UpdateInboundLimiter(currentTag, &added); err != nil {
 					c.logger.Print(err)
 				}
 			}
 		}
 		c.logger.Printf("%d user deleted, %d user added", len(deleted), len(added))
 	}
+	c.mu.Lock()
 	c.userList = newUserInfo
+	c.mu.Unlock()
 	return nil
 }
 
@@ -421,7 +484,7 @@ func (c *Controller) addInboundForSSPlugin(newNodeInfo api.NodeInfo) (err error)
 }
 
 func (c *Controller) addNewUser(userInfo *[]api.UserInfo, nodeInfo *api.NodeInfo) (err error) {
-	users := make([]*protocol.User, 0)
+	var users []*protocol.User
 	switch nodeInfo.NodeType {
 	case "V2ray", "Vmess", "Vless":
 		if nodeInfo.EnableVless || (nodeInfo.NodeType == "Vless" && nodeInfo.NodeType != "Vmess") {
@@ -453,18 +516,24 @@ func compareUserList(old, new *[]api.UserInfo) (deleted, added []api.UserInfo) {
 
 	var set []api.UserInfo // 交集
 
+	oldUsers := []api.UserInfo{}
+	newUsers := []api.UserInfo{}
+	if old != nil {
+		oldUsers = *old
+	}
+	if new != nil {
+		newUsers = *new
+	}
 	// 1.源数组建立map
-	for _, v := range *old {
+	for _, v := range oldUsers {
 		mSrc[v] = 0
 		mAll[v] = 0
 	}
 	// 2.目数组中，存不进去，即重复元素，所有存不进去的集合就是并集
-	for _, v := range *new {
-		l := len(mAll)
-		mAll[v] = 1
-		if l != len(mAll) { // 长度变化，即可以存
-			l = len(mAll)
-		} else { // 存不了，进并集
+	for _, v := range newUsers {
+		if _, exists := mAll[v]; !exists {
+			mAll[v] = 1
+		} else {
 			set = append(set, v)
 		}
 	}
@@ -498,7 +567,7 @@ func limitUser(c *Controller, user api.UserInfo, silentUsers *[]api.UserInfo) {
 
 func (c *Controller) userInfoMonitor() (err error) {
 	// delay to start
-	if time.Since(c.startAt) < time.Duration(c.config.UpdatePeriodic)*time.Second {
+	if time.Since(c.startAt) < c.userInterval() {
 		return nil
 	}
 
@@ -538,15 +607,38 @@ func (c *Controller) userInfoMonitor() (err error) {
 		}
 	}
 
-	// Get User traffic
+	// Get User traffic. Counters are swapped to 0 at snapshot time so bytes
+	// that arrive during the push are not discarded. A failed push adds the
+	// snapshot back.
+	c.mu.RLock()
+	var users []api.UserInfo
+	if c.userList != nil {
+		users = append([]api.UserInfo(nil), (*c.userList)...)
+	}
+	tag := c.Tag
+	c.mu.RUnlock()
+
 	var userTraffic []api.UserTraffic
-	var upCounterList []stats.Counter
-	var downCounterList []stats.Counter
-	AutoSpeedLimit := int64(c.config.AutoSpeedLimitConfig.Limit)
-	UpdatePeriodic := int64(c.config.UpdatePeriodic)
+	type counterSnap struct {
+		n       int64
+		counter stats.Counter
+	}
+	var snaps []counterSnap
+	AutoSpeedLimit := int64(0)
+	if c.config.AutoSpeedLimitConfig != nil {
+		AutoSpeedLimit = int64(c.config.AutoSpeedLimitConfig.Limit)
+	}
+	UpdatePeriodic := int64(c.userInterval() / time.Second)
+	if UpdatePeriodic <= 0 {
+		UpdatePeriodic = 60
+	}
 	limitedUsers := make([]api.UserInfo, 0)
-	for _, user := range *c.userList {
-		up, down, upCounter, downCounter := c.getTraffic(c.buildUserTag(&user))
+	for _, user := range users {
+		email := fmt.Sprintf("%s|%s|%d", tag, user.Email, user.UID)
+		upCounter := c.stm.GetCounter("user>>>" + email + ">>>traffic>>>uplink")
+		downCounter := c.stm.GetCounter("user>>>" + email + ">>>traffic>>>downlink")
+		up := snapshotCounter(upCounter)
+		down := snapshotCounter(downCounter)
 		if up > 0 || down > 0 {
 			// Over speed users
 			if AutoSpeedLimit > 0 {
@@ -571,55 +663,41 @@ func (c *Controller) userInfoMonitor() (err error) {
 				Email:    user.Email,
 				Upload:   up,
 				Download: down})
-
-			if upCounter != nil {
-				upCounterList = append(upCounterList, upCounter)
+			if up > 0 {
+				snaps = append(snaps, counterSnap{n: up, counter: upCounter})
 			}
-			if downCounter != nil {
-				downCounterList = append(downCounterList, downCounter)
+			if down > 0 {
+				snaps = append(snaps, counterSnap{n: down, counter: downCounter})
 			}
 		} else {
 			delete(c.warnedUsers, user)
 		}
 	}
 	if len(limitedUsers) > 0 {
-		if err := c.UpdateInboundLimiter(c.Tag, &limitedUsers); err != nil {
+		if err := c.UpdateInboundLimiter(tag, &limitedUsers); err != nil {
 			c.logger.Print(err)
 		}
 	}
 
 	if len(userTraffic) > 0 {
-		var err error // Define an empty error
+		var err error
 		if !c.config.DisableUploadTraffic {
 			err = c.apiClient.ReportUserTraffic(&userTraffic)
-		}
-		// If report traffic error, not clear the traffic
-		if err != nil {
-			c.logger.Print(err)
-		} else {
-			c.resetTraffic(&upCounterList, &downCounterList)
+			if err != nil {
+				c.logger.Print(err)
+				for _, snap := range snaps {
+					restoreCounter(snap.counter, snap.n)
+				}
+			}
 		}
 	}
 
-	// Report Online info
-	if onlineDevice, err := c.GetOnlineDevice(c.Tag); err != nil {
+	// Report Online info. Only IPs whose user traffic is above the threshold.
+	// A uid with no traffic row is not reported.
+	if onlineDevice, err := c.GetOnlineDevice(tag); err != nil {
 		c.logger.Print(err)
-	} else if len(*onlineDevice) > 0 {
-		// Only report user has traffic > 100kb to allow ping test
-		var result []api.OnlineUser
-		var nocountUID = make(map[int]struct{})
-		for _, traffic := range userTraffic {
-			total := traffic.Upload + traffic.Download
-			if total < int64(c.config.DeviceOnlineMinTraffic*1000) {
-				nocountUID[traffic.UID] = struct{}{}
-			}
-		}
-		for _, online := range *onlineDevice {
-			if _, ok := nocountUID[online.UID]; !ok {
-				result = append(result, online)
-			}
-		}
-
+	} else if onlineDevice != nil && len(*onlineDevice) > 0 {
+		result := onlineUsersOverThreshold(*onlineDevice, userTraffic, c.config.DeviceOnlineMinTraffic)
 		if err = c.apiClient.ReportNodeOnlineUsers(&result); err != nil {
 			log.Print(err)
 		} else {
@@ -628,7 +706,7 @@ func (c *Controller) userInfoMonitor() (err error) {
 	}
 
 	// Report Illegal user
-	if detectResult, err := c.GetDetectResult(c.Tag); err != nil {
+	if detectResult, err := c.GetDetectResult(tag); err != nil {
 		c.logger.Print(err)
 	} else if len(*detectResult) > 0 {
 		if err = c.apiClient.ReportIllegal(detectResult); err != nil {
@@ -641,29 +719,24 @@ func (c *Controller) userInfoMonitor() (err error) {
 	return nil
 }
 
-func (c *Controller) buildNodeTag() string {
-	return fmt.Sprintf("%s_%s_%d", c.nodeInfo.NodeType, c.config.ListenIP, c.nodeInfo.Port)
-}
-
 // func (c *Controller) logPrefix() string {
 // 	return fmt.Sprintf("[%s] %s(ID=%d)", c.clientInfo.APIHost, c.nodeInfo.NodeType, c.nodeInfo.NodeID)
 // }
 
 // Check Cert
 func (c *Controller) certMonitor() error {
-	if c.nodeInfo.EnableTLS && !c.config.EnableREALITY {
-		switch c.config.CertConfig.CertMode {
-		case "dns", "http", "tls":
-			lego, err := mylego.New(c.config.CertConfig)
-			if err != nil {
-				c.logger.Print(err)
-			}
-			// Xray-core supports the OcspStapling certification hot renew
-			_, _, _, err = lego.RenewCert()
-			if err != nil {
-				c.logger.Print(err)
-			}
-		}
+	if !c.needsCertMonitor() {
+		return nil
+	}
+	lego, err := mylego.New(c.config.CertConfig)
+	if err != nil {
+		c.logger.Print(err)
+		return nil
+	}
+	// Xray-core supports the OcspStapling certification hot renew
+	_, _, _, err = lego.RenewCert()
+	if err != nil {
+		c.logger.Print(err)
 	}
 	return nil
 }
