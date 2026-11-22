@@ -2,12 +2,10 @@
 
 ## 0.5
 
-- 将 xray-core 从 v26.10.31 升级到官方 v26.11.9。默认 uTLS 指纹改为 Chrome 155，REALITY 对 dest 的探测增加 10 秒超时，并允许空 SNI。入站启动失败时会关闭并移除 handler。
-- `third_party/reality` 同步到 xray-core v26.11.9 所用的 XTLS/REALITY `4bb46b2afd8b`，保留接受仅 X25519 ClientHello 的补丁和顶层 `REALITYAllowNonPQClients` 行为。
-- 将 `github.com/klauspost/compress` 固定到 v1.20.4，覆盖 GHSA-fpmh-frq8-7rj8（官方 v26.11.9 仍会选到有漏洞的 v1.20.1）。
-- 发布包不再使用仓库里过期的 `release/config/geoip.dat`、`geosite.dat`。构建时从 Loyalsoldier/v2ray-rules-dat 下载新文件打进 zip；Docker 镜像构建同样下载。仓库不再提交这两份文件。
-- 修复 CodeQL 工作流缺少 `security-events: write` 导致 SARIF 上传失败的问题。
-- Build and Release 矩阵去掉 android/arm64。该目标在 Go 1.27 上会因 `github.com/wlynxg/anet` 引用 `net.zoneCache` 而链接失败；linux/amd64 和 linux/arm64 不受影响。
+- 升级到 xray-core 官方 v26.11.9，继续接受非抗量子 REALITY 客户端。
+- 压缩库固定到 v1.20.4。
+- 安装包在构建时下载新的 geoip / geosite。
+- 不再构建 android/arm64。
 
 ## 0.4
 
