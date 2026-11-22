@@ -19,3 +19,7 @@ error.log
 cert
 config.yml
 updateR.sh
+
+# Fresh copies are downloaded at package/image build time.
+release/config/geoip.dat
+release/config/geosite.dat

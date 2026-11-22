@@ -2,10 +2,15 @@
 
 Upstream: https://github.com/xtls/reality
 
-Commit: `83f621788ca8` (2026-10-14), the version required by
-`github.com/xtls/xray-core` v26.10.31
-(`v1.260327.1-0.20261031132019-a4a3dff5b20c`).
-Pseudo-version: `v0.0.0-20261014101318-83f621788ca8`.
+Commit: `4bb46b2afd8b` (2026-11-08), the version required by
+`github.com/xtls/xray-core` v26.11.9.
+Pseudo-version: `v0.0.0-20261108101329-4bb46b2afd8b`.
+
+This is two commits ahead of `83f621788ca8` (the copy used with
+xray-core v26.10.31). The upstream additions are only in
+`record_detect.go` (XTLS/REALITY #42 and #43): a 10-second deadline on
+dest probe handshakes, and `InsecureSkipVerify` when the probe SNI is
+empty. The Server() key-share rejection from `8cdf7bf` is unchanged.
 
 This directory is that module plus one behavior change. XrayR's `go.mod`
 selects it with:
@@ -24,7 +29,7 @@ Licenses are the upstream ones and are not changed:
 `tls.go` calls `selectREALITYPeerPub` (`peerpub.go`) instead of the inline
 check from XTLS/REALITY commit `8cdf7bf` ("reject outdated/strange Client
 Hello that doesn't have X25519MLKEM768 before optional X25519"), which is
-present in `83f621788ca8` as:
+still present in `4bb46b2afd8b` as:
 
 ```go
 if peerPub2 == nil {

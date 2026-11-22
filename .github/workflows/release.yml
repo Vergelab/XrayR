@@ -50,10 +50,8 @@ jobs:
             goarch: arm
             goarm: 5
           # END Linux ARM 5 6 7
-          # BEGIN Android ARM 8
-          - goos: android
-            goarch: arm64
-          # END Android ARM 8
+          # Android ARM64 dropped: github.com/wlynxg/anet fails to link
+          # with Go 1.27 ("invalid reference to net.zoneCache").
           # BEGIN Other architectures
           # BEGIN riscv64 & ARM64
           - goos: linux
@@ -97,7 +95,7 @@ jobs:
       GOARCH: ${{ matrix.goarch }}
       GOARM: ${{ matrix.goarm }}
       CGO_ENABLED: 0
-      XRAYR_VERSION: "0.4"
+      XRAYR_VERSION: "0.5"
     steps:
       - name: Checkout codebase
         uses: actions/checkout@v4
@@ -112,7 +110,7 @@ jobs:
             ver="${ver#v}"
           fi
           if [ -z "$ver" ]; then
-            ver=0.4
+            ver=0.5
           fi
           echo "XRAYR_VERSION=$ver" >> "$GITHUB_ENV"
           echo "XrayR version: $ver"
@@ -163,13 +161,20 @@ jobs:
             cp ${GITHUB_WORKSPACE}/release/config/custom_inbound.json ./build_assets/custom_inbound.json
             cp ${GITHUB_WORKSPACE}/release/config/rulelist ./build_assets/rulelist
             cp ${GITHUB_WORKSPACE}/release/config/config.yml.example ./build_assets/config.yml
+            # Always fetch fresh Loyalsoldier dat at build time. Do not copy
+            # release/config/geoip.dat or geosite.dat; those files are not
+            # kept in the repo and would go stale (v0.4 zips missed GOOGLE-GEMINI).
             LIST=('geoip' 'geosite')
             for i in "${LIST[@]}"
             do
               DOWNLOAD_URL="https://raw.githubusercontent.com/Loyalsoldier/v2ray-rules-dat/release/${i}.dat"
               FILE_NAME="${i}.dat"
               echo -e "Downloading ${DOWNLOAD_URL}..."
-              curl -fL "${DOWNLOAD_URL}" -o ./build_assets/${FILE_NAME}
+              curl -fL "${DOWNLOAD_URL}" -o "./build_assets/${FILE_NAME}"
+              if [ ! -s "./build_assets/${FILE_NAME}" ]; then
+                echo "Downloaded ${FILE_NAME} is empty" >&2
+                exit 1
+              fi
             done
       - name: Create ZIP archive
         shell: bash

@@ -1,6 +1,6 @@
 // Copyright 2026 Vergelab.
 //
-// This file is a modification of github.com/xtls/reality at 83f621788ca8
+// This file is a modification of github.com/xtls/reality at 4bb46b2afd8b
 // (MPL-2.0, see LICENSE). It isolates the ClientHello key-share choice that
 // upstream commit 8cdf7bf inlined in Server.
 
