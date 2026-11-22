@@ -1,5 +1,11 @@
 # 更新日志
 
+## 0.5.1
+
+- README.md 改为空文件。
+- 发布工作流给 GITHUB_TOKEN 加上 contents: write，用来上传安装包。
+- 容器镜像名改为小写 ghcr.io/vergelab/xrayr。
+
 ## 0.5
 
 - 升级到 xray-core 官方 v26.11.9，继续接受非抗量子 REALITY 客户端。
