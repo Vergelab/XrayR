@@ -212,10 +212,10 @@ func Server(ctx context.Context, conn net.Conn, config *Config) (*Conn, error) {
 			if copying || err != nil || hs.c.vers != VersionTLS13 || !config.ServerNames[hs.clientHello.serverName] {
 				break
 			}
-			// Upstream 8cdf7bf (this tree, 83f621788ca8) rejects a ClientHello
-			// with no X25519MLKEM768 share. selectREALITYPeerPub keeps that
-			// unless AllowNonPQClients or SetAllowNonPQClients is set, in
-			// which case a standalone X25519 share is used for auth.
+			// Upstream 8cdf7bf (still present in 4bb46b2afd8b) rejects a
+			// ClientHello with no X25519MLKEM768 share. selectREALITYPeerPub
+			// keeps that unless AllowNonPQClients or SetAllowNonPQClients is
+			// set, in which case a standalone X25519 share is used for auth.
 			// X25519MLKEM768 hellos still authenticate the same way, and the
 			// TLS group is still whatever dest negotiates below.
 			peerPub, acceptHello := selectREALITYPeerPub(hs.clientHello.keyShares, allowNonPQClients(config))

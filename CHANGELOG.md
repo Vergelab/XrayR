@@ -1,5 +1,12 @@
 # 更新日志
 
+## 0.5
+
+- 升级到 xray-core 官方 v26.11.9，继续接受非抗量子 REALITY 客户端。
+- 压缩库固定到 v1.20.4。
+- 安装包在构建时下载新的 geoip / geosite。
+- 不再构建 android/arm64。
+
 ## 0.4
 
 - `REALITYAllowNonPQClients` 改到配置文件顶层，与 `Log`、`Nodes` 同级。不写仍然是 true。启动和热重载时写入一次，对整个进程生效。

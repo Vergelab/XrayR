@@ -613,7 +613,7 @@ type Config struct {
 	// when the client offered it and dest negotiates it).
 	//
 	// The zero value keeps the upstream rejection from XTLS/REALITY
-	// commit 8cdf7bf, which is in this tree at 83f621788ca8. Xray-core's
+	// commit 8cdf7bf, which is still in this tree at 4bb46b2afd8b. Xray-core's
 	// protobuf REALITY config has no field for this, so XrayR sets the
 	// process-wide equivalent with SetAllowNonPQClients.
 	AllowNonPQClients bool
